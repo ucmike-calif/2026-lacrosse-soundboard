@@ -311,6 +311,7 @@
 
     // Web Audio API playback state (Safari-friendly + reliable fades)
     let audioCtx = null;
+    let audioUnlocked = false; // iOS/Safari: ensure audio output is unlocked once by a user gesture
     let currentGainNode = null;
     let currentSourceNode = null;
     let fadeTimeout = null;
@@ -353,6 +354,29 @@
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
       return audioCtx;
+    }
+
+    // Safari/iOS can appear to "play" but output is muted until the AudioContext is truly unlocked
+    async function unlockAudio(){
+      const ctx = ensureAudioContext();
+      if (ctx.state === "suspended"){
+        try { await ctx.resume(); } catch(e){}
+      }
+      if (audioUnlocked) return;
+
+      try {
+        // Play a 1-sample buffer to unlock audio output.
+        const buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ctx.destination);
+        src.start(0);
+        // Some Safari versions need a tiny delay before considering it unlocked
+        audioUnlocked = true;
+      } catch(e){
+        // If unlock fails, we still try normal playback
+        audioUnlocked = true;
+      }
     }
 
     function hardStop(){
@@ -427,8 +451,9 @@
       // stop whatever is playing (immediately) before starting a new one
       hardStop();
 
+      // Ensure the audio pipeline is unlocked for Safari/iOS
+      await unlockAudio();
       const ctx = ensureAudioContext();
-      // This resume (inside click handler path) prevents "tap again" Safari blocks
       if (ctx.state === "suspended"){
         try { await ctx.resume(); } catch(e){}
       }
