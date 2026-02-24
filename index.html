@@ -248,24 +248,6 @@
   <script>
     /*****************************************************************
      * EDIT HERE: Roster + file naming
-     *
-     * This app expects:
-     *   docs/
-     *     index.html
-     *     audio/
-     *       songs/
-     *         01_Roshan_Royai.mp3
-     *         ...
-     *       goals/
-     *         01_Roshan_Royai_Goal.mp3
-     *         ...
-     *       songs/extras/
-     *         Anthem.mp3
-     *         TBD_1.mp3 ...
-     *       goals/extras/
-     *         TBD_1_Goal.mp3 ...
-     *
-     * If your filenames differ, update songFile / goalFile fields below.
      *****************************************************************/
     const AUDIO_BASE = "audio";
 
@@ -293,9 +275,7 @@
     ];
 
     const extras = [
-      // Anthem is songs-only (no goal confirmation needed in Song mode; in Goal mode we’ll still confirm if tapped)
       { key: "Anthem", labelTop: "Anthem", labelBottom: "National Anthem", songFile: "extras/Anthem.mp3", goalFile: "extras/Anthem_Goal.mp3" },
-
       { key: "TBD 1", labelTop: "TBD 1", labelBottom: "TBD 1", songFile: "extras/TBD_1.mp3", goalFile: "extras/TBD_1_Goal.mp3" },
       { key: "TBD 2", labelTop: "TBD 2", labelBottom: "TBD 2", songFile: "extras/TBD_2.mp3", goalFile: "extras/TBD_2_Goal.mp3" },
       { key: "TBD 3", labelTop: "TBD 3", labelBottom: "TBD 3", songFile: "extras/TBD_3.mp3", goalFile: "extras/TBD_3_Goal.mp3" },
@@ -307,12 +287,19 @@
     const Mode = Object.freeze({ SONGS: "songs", GOAL: "goal" });
     let currentMode = Mode.SONGS;
 
-    let currentAudio = null;
+    // Existing state vars (kept for compatibility with earlier code)
+    let currentAudio = null;        // mirrors currentAudioEl when playing
     let currentButtonEl = null;
-    let fadeInterval = null;
 
-    let lastPlayed = null; // { src, label }
-    let pendingGoal = null; // { src, label, buttonEl }
+    let lastPlayed = null;          // { src, label }
+    let pendingGoal = null;         // { src, label, buttonEl }
+
+    // Web Audio API state (for true fader-style fades)
+    let audioCtx = null;
+    let currentAudioEl = null;
+    let currentMediaNode = null;
+    let currentGainNode = null;
+    let fadeTimeout = null;
 
     const grid = document.getElementById("grid");
     const status = document.getElementById("status");
@@ -348,96 +335,116 @@
       }
     }
 
+    // Hard stop: immediate pause + reset + disconnect audio nodes
     function stopCurrentImmediate(){
-      if(fadeInterval){
-        clearInterval(fadeInterval);
-        fadeInterval = null;
+      if (fadeTimeout){
+        clearTimeout(fadeTimeout);
+        fadeTimeout = null;
       }
-      if(currentAudio){
-        try { currentAudio.pause(); } catch(e){}
-        try { currentAudio.currentTime = 0; } catch(e){}
-        currentAudio = null;
+
+      if (currentAudioEl){
+        try { currentAudioEl.pause(); } catch(e){}
+        try { currentAudioEl.currentTime = 0; } catch(e){}
+        currentAudioEl = null;
       }
-      clearPlayingHighlight();
-      setStatus("");
-    }
 
-    // Fade-out stop (requested change)
-  function stopCurrentWithFade(){
-  if(!currentAudio) return;
-
-  if(fadeInterval){
-    clearInterval(fadeInterval);
-    fadeInterval = null;
-  }
-
-  const fadeDuration = 10000; // 10 seconds total
-  const tick = 40;            // smooth + Safari friendly
-  const audioRef = currentAudio;
-
-  const startVol = Math.max(0.001, audioRef.volume ?? 1.0);
-  const startTime = performance.now();
-
-  // Custom PA-style curve:
-  // 0–40% time: hold volume
-  // 40–85%: slow exponential glide
-  // 85–100%: feather to silence
-  function paFadeCurve(t){
-    if (t < 0.4) {
-      return 0; // hold volume
-    }
-
-    if (t < 0.85) {
-      const x = (t - 0.4) / 0.45; // normalize to 0–1
-      return Math.pow(x, 2.2) * 0.85;
-    }
-
-    // final feather
-    const y = (t - 0.85) / 0.15;
-    return 0.85 + Math.pow(y, 0.7) * 0.15;
-  }
-
-  fadeInterval = setInterval(() => {
-    if(currentAudio !== audioRef){
-      clearInterval(fadeInterval);
-      fadeInterval = null;
-      return;
-    }
-
-    const elapsed = performance.now() - startTime;
-    const t = Math.min(1, elapsed / fadeDuration);
-
-    const curve = paFadeCurve(t); // 0 → 1
-    const newVol = startVol * (1 - curve);
-
-    audioRef.volume = Math.max(0, newVol);
-
-    if(t >= 1 || audioRef.volume <= 0.001){
-      audioRef.volume = 0;
-      try { audioRef.pause(); } catch(e){}
-      try { audioRef.currentTime = 0; } catch(e){}
-      audioRef.volume = 1.0;
-
-      clearInterval(fadeInterval);
-      fadeInterval = null;
+      if (currentMediaNode){
+        try { currentMediaNode.disconnect(); } catch(e){}
+        currentMediaNode = null;
+      }
+      if (currentGainNode){
+        try { currentGainNode.disconnect(); } catch(e){}
+        currentGainNode = null;
+      }
 
       currentAudio = null;
       clearPlayingHighlight();
       setStatus("");
     }
-  }, tick);
-}
 
-    function playAudio(src, label, buttonEl){
-      // If we’re fading something out, kill the fade and stop immediately
+    // Stop with a true Web Audio fader-style fade:
+    // 10s total, mostly audible for ~4s, then tails off smoothly.
+    function stopCurrentWithFade(){
+      if (!currentAudioEl || !audioCtx || !currentGainNode) return;
+
+      if (fadeTimeout){
+        clearTimeout(fadeTimeout);
+        fadeTimeout = null;
+      }
+
+      const now = audioCtx.currentTime;
+      const total = 10.0;  // seconds
+      const hold  = 4.0;   // seconds mostly-audible
+
+      const gain = currentGainNode.gain;
+      gain.cancelScheduledValues(now);
+
+      const currentVal = Math.max(0.0001, gain.value || 1.0);
+      gain.setValueAtTime(currentVal, now);
+
+      // Hold
+      gain.setValueAtTime(currentVal, now + hold);
+
+      // Tail
+      try {
+        gain.exponentialRampToValueAtTime(Math.max(0.15 * currentVal, 0.0001), now + (total - 0.8));
+        gain.exponentialRampToValueAtTime(0.0001, now + total);
+      } catch (e) {
+        gain.linearRampToValueAtTime(0.15 * currentVal, now + (total - 0.8));
+        gain.linearRampToValueAtTime(0.0001, now + total);
+      }
+
+      fadeTimeout = setTimeout(() => {
+        if (!currentAudioEl) return;
+
+        try { currentAudioEl.pause(); } catch(e){}
+        try { currentAudioEl.currentTime = 0; } catch(e){}
+
+        try {
+          gain.cancelScheduledValues(audioCtx.currentTime);
+          gain.setValueAtTime(1.0, audioCtx.currentTime);
+        } catch(e){}
+
+        try { currentMediaNode && currentMediaNode.disconnect(); } catch(e){}
+        try { currentGainNode && currentGainNode.disconnect(); } catch(e){}
+        currentMediaNode = null;
+        currentGainNode = null;
+
+        currentAudioEl = null;
+        currentAudio = null;
+        clearPlayingHighlight();
+        setStatus("");
+        fadeTimeout = null;
+      }, Math.ceil(total * 1000) + 60);
+    }
+
+    async function playAudio(src, label, buttonEl){
+      // Hard-stop anything currently playing
       stopCurrentImmediate();
+
+      // Create/reuse AudioContext
+      if (!audioCtx){
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      if (audioCtx.state === "suspended"){
+        try { await audioCtx.resume(); } catch(e){}
+      }
 
       const audio = new Audio(src);
       audio.volume = 1.0;
+      currentAudioEl = audio;
+      currentAudio = audio;
+
+      // Route through GainNode
+      currentGainNode = audioCtx.createGain();
+      currentGainNode.gain.setValueAtTime(1.0, audioCtx.currentTime);
+
+      currentMediaNode = audioCtx.createMediaElementSource(audio);
+      currentMediaNode.connect(currentGainNode);
+      currentGainNode.connect(audioCtx.destination);
 
       // Highlight button while playing
-      currentAudio = audio;
-      if(buttonEl){
+      if (buttonEl){
         currentButtonEl = buttonEl;
         buttonEl.classList.add("playing");
       }
@@ -446,21 +453,27 @@
       lastPlayed = { src, label };
 
       audio.addEventListener("ended", () => {
-        // Only clear if this is still the current audio
-        if(currentAudio === audio){
+        if (currentAudioEl === audio){
+          try { currentMediaNode && currentMediaNode.disconnect(); } catch(e){}
+          try { currentGainNode && currentGainNode.disconnect(); } catch(e){}
+          currentMediaNode = null;
+          currentGainNode = null;
+
+          currentAudioEl = null;
           currentAudio = null;
           clearPlayingHighlight();
           setStatus("");
         }
       });
 
-      audio.play().catch(err => {
-        console.error(err);
-        // iOS/Safari sometimes blocks until user gesture; you are clicking buttons so usually ok.
-        setStatus("Playback blocked. Tap again.");
+      try {
+        await audio.play();
+      } catch (err) {
+        console.error("PLAY ERROR:", err);
+        setStatus(`Could not play audio (${err?.name || "error"}). Check file path/format.`);
         clearPlayingHighlight();
-        currentAudio = null;
-      });
+        stopCurrentImmediate();
+      }
     }
 
     function showConfirmBar(text){
@@ -476,7 +489,6 @@
     function setMode(mode){
       currentMode = mode;
 
-      // UI banners & tabs
       if(mode === Mode.SONGS){
         modeBanner.textContent = "SONG MODE";
         modeBanner.classList.remove("goal");
@@ -495,7 +507,6 @@
         songsTab.classList.remove("active");
       }
 
-      // Re-render grid to tint buttons by mode
       renderGrid();
       setStatus("");
     }
@@ -504,7 +515,6 @@
       const card = document.createElement("div");
       card.className = "card";
 
-      // tint based on current mode
       if(currentMode === Mode.SONGS) card.classList.add("songModeTint");
       if(currentMode === Mode.GOAL)  card.classList.add("goalModeTint");
 
@@ -519,7 +529,7 @@
       card.appendChild(num);
       card.appendChild(name);
 
-      card.addEventListener("click", (e) => {
+      card.addEventListener("click", () => {
         flashButton(card);
         onClick(card);
       });
@@ -530,7 +540,6 @@
     function renderGrid(){
       grid.innerHTML = "";
 
-      // Players first
       for(const p of players){
         const songSrc = `${AUDIO_BASE}/songs/${p.songFile}`;
         const goalSrc = `${AUDIO_BASE}/goals/${p.goalFile}`;
@@ -543,7 +552,6 @@
             if(currentMode === Mode.SONGS){
               playAudio(songSrc, label, el);
             } else {
-              // Goal mode: require confirm bar
               pendingGoal = { src: goalSrc, label: `Confirm GOAL call: ${label}`, buttonEl: el };
               showConfirmBar(pendingGoal.label);
             }
@@ -553,7 +561,6 @@
         grid.appendChild(card);
       }
 
-      // Extras
       for(const x of extras){
         const songSrc = `${AUDIO_BASE}/songs/${x.songFile}`;
         const goalSrc = `${AUDIO_BASE}/goals/${x.goalFile}`;
@@ -577,13 +584,12 @@
     }
 
     /*****************************************************************
-     * Wire up controls
+     * Controls
      *****************************************************************/
     songsTab.addEventListener("click", () => setMode(Mode.SONGS));
     goalTab.addEventListener("click",  () => setMode(Mode.GOAL));
 
     stopBtn.addEventListener("click", () => {
-      // fade out current audio instead of abrupt stop
       stopCurrentWithFade();
       hideConfirmBar();
     });
@@ -594,7 +600,6 @@
         setStatus("Nothing to replay yet.");
         return;
       }
-      // replay without requiring confirm (even if you’re in goal mode)
       playAudio(lastPlayed.src, `Replay: ${lastPlayed.label}`, null);
     });
 
