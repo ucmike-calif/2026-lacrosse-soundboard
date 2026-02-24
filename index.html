@@ -294,12 +294,12 @@
     let lastPlayed = null;          // { src, label }
     let pendingGoal = null;         // { src, label, buttonEl }
 
-    // Web Audio API state (for true fader-style fades)
+    // Web Audio API state (buffer-based playback for reliable fades in Safari)
     let audioCtx = null;
-    let currentAudioEl = null;
-    let currentMediaNode = null;
     let currentGainNode = null;
+    let currentSourceNode = null;
     let fadeTimeout = null;
+    let playRequestId = 0; // prevents stale async fetch/decode from starting later
 
     const grid = document.getElementById("grid");
     const status = document.getElementById("status");
@@ -335,23 +335,20 @@
       }
     }
 
-    // Hard stop: immediate pause + reset + disconnect audio nodes
+    // Hard stop: immediately silence + stop source
     function stopCurrentImmediate(){
       if (fadeTimeout){
         clearTimeout(fadeTimeout);
         fadeTimeout = null;
       }
 
-      if (currentAudioEl){
-        try { currentAudioEl.pause(); } catch(e){}
-        try { currentAudioEl.currentTime = 0; } catch(e){}
-        currentAudioEl = null;
+      // Stop source immediately
+      if (currentSourceNode){
+        try { currentSourceNode.stop(0); } catch(e){}
+        currentSourceNode = null;
       }
 
-      if (currentMediaNode){
-        try { currentMediaNode.disconnect(); } catch(e){}
-        currentMediaNode = null;
-      }
+      // Disconnect gain
       if (currentGainNode){
         try { currentGainNode.disconnect(); } catch(e){}
         currentGainNode = null;
@@ -360,56 +357,53 @@
       currentAudio = null;
       clearPlayingHighlight();
       setStatus("");
+
+      // Invalidate any in-flight fetch/decode
+      playRequestId++;
     }
 
-    // Stop with a true Web Audio fader-style fade:
-    // 10s total, mostly audible for ~4s, then tails off smoothly.
+    // Stop with a true fader-style fade (Safari-reliable)
+    // Default: 10s total, stays mostly audible for first ~2–4s
     function stopCurrentWithFade(){
-      if (!currentAudioEl || !audioCtx || !currentGainNode) return;
+      if (!audioCtx || !currentGainNode || !currentSourceNode) return;
 
       if (fadeTimeout){
         clearTimeout(fadeTimeout);
         fadeTimeout = null;
       }
 
+      // Make sure context is running
+      if (audioCtx.state === "suspended"){
+        audioCtx.resume().catch(() => {});
+      }
+
       const now = audioCtx.currentTime;
+      const total = 10.0;  // seconds total
+      const hold  = 3.0;   // seconds mostly audible (set 2–5)
+      const floor = 0.0001;
 
-      // You asked for: long tail, but stays mostly audible at first.
-      // This curve holds for a bit, then uses setTargetAtTime (a natural analog-style exponential)
-      // which sounds smoother in Safari than exponentialRampToValueAtTime.
-      const total = 10.0;   // seconds total fade length
-      const hold  = 2.0;    // seconds to stay mostly audible (increase to 3–4 if you want)
-      const floor = 0.0001; // must be > 0 for Web Audio
+      const g = currentGainNode.gain;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(Math.max(g.value || 1.0, 0.0001), now);
 
-      const gainParam = currentGainNode.gain;
+      // Hold steady
+      g.setValueAtTime(g.value || 1.0, now + hold);
 
-      // Cancel any prior automation and *force* an audible starting point.
-      // Safari can report a stale gain.value; setting to 1.0 avoids the "silent after 2s" issue.
-      gainParam.cancelScheduledValues(now);
-      gainParam.setValueAtTime(1.0, now);
+      // Tail with a natural-sounding exponential falloff
+      // timeConstant controls how slowly it decays after hold.
+      const timeConstant = 3.5; // larger = longer audible tail (try 3–6)
+      g.setTargetAtTime(floor, now + hold, timeConstant);
 
-      // Hold near full volume
-      gainParam.setValueAtTime(1.0, now + hold);
-
-      // Tail off smoothly. The timeConstant controls how quickly it drops:
-      // bigger = slower, more audible longer.
-      const timeConstant = 2.8; // tweak 2.2–4.0
-      gainParam.setTargetAtTime(floor, now + hold, timeConstant);
-
-      // Stop after total duration
+      // Stop the source after total seconds (gives a long, audible tail)
       fadeTimeout = setTimeout(() => {
-        if (!currentAudioEl) return;
-
-        try { currentAudioEl.pause(); } catch(e){}
-        try { currentAudioEl.currentTime = 0; } catch(e){}
-
-        // Cleanup nodes
-        try { currentMediaNode && currentMediaNode.disconnect(); } catch(e){}
-        try { currentGainNode && currentGainNode.disconnect(); } catch(e){}
-        currentMediaNode = null;
-        currentGainNode = null;
-
-        currentAudioEl = null;
+        if (currentSourceNode){
+          try { currentSourceNode.stop(0); } catch(e){}
+          currentSourceNode = null;
+        }
+        if (currentGainNode){
+          try { currentGainNode.disconnect(); } catch(e){}
+          currentGainNode = null;
+        }
         currentAudio = null;
         clearPlayingHighlight();
         setStatus("");
@@ -421,10 +415,73 @@
       // Hard-stop anything currently playing
       stopCurrentImmediate();
 
-      // Create/reuse AudioContext
+      // Create/reuse AudioContext (must be on user gesture)
       if (!audioCtx){
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       }
+      if (audioCtx.state === "suspended"){
+        try { await audioCtx.resume(); } catch(e){}
+      }
+
+      // Track this request so older async work can't start later
+      const myId = ++playRequestId;
+
+      // UI highlight
+      if (buttonEl){
+        currentButtonEl = buttonEl;
+        buttonEl.classList.add("playing");
+      }
+      setStatus(`Loading: ${label}`);
+
+      try {
+        const resp = await fetch(src, { cache: "no-cache" });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status} loading ${src}`);
+        const arrayBuf = await resp.arrayBuffer();
+
+        // If another sound started while we were loading, abort
+        if (myId !== playRequestId) return;
+
+        const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+        if (myId !== playRequestId) return;
+
+        // Create nodes
+        const gainNode = audioCtx.createGain();
+        gainNode.gain.setValueAtTime(1.0, audioCtx.currentTime);
+        gainNode.connect(audioCtx.destination);
+
+        const sourceNode = audioCtx.createBufferSource();
+        sourceNode.buffer = audioBuf;
+        sourceNode.connect(gainNode);
+
+        // Set current nodes
+        currentGainNode = gainNode;
+        currentSourceNode = sourceNode;
+        currentAudio = { src, label }; // lightweight marker for "playing"
+
+        lastPlayed = { src, label };
+        setStatus(`Playing: ${label}`);
+
+        sourceNode.onended = () => {
+          // Only clear if nothing else has started
+          if (myId === playRequestId){
+            try { sourceNode.disconnect(); } catch(e){}
+            try { gainNode.disconnect(); } catch(e){}
+            currentSourceNode = null;
+            currentGainNode = null;
+            currentAudio = null;
+            clearPlayingHighlight();
+            setStatus("");
+          }
+        };
+
+        sourceNode.start(0);
+
+      } catch (err){
+        console.error("PLAY ERROR:", err);
+        clearPlayingHighlight();
+        setStatus("Could not play audio. Check file path/format.");
+      }
+    }
       if (audioCtx.state === "suspended"){
         try { await audioCtx.resume(); } catch(e){}
       }
