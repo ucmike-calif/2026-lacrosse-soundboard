@@ -366,31 +366,35 @@
   function stopCurrentWithFade(){
   if(!currentAudio) return;
 
-  // Cancel any existing fade
   if(fadeInterval){
     clearInterval(fadeInterval);
     fadeInterval = null;
   }
 
-  const fadeDuration = 5000; // 5s tail
-  const tick = 30;           // smoothness (ms)
+  const fadeDuration = 10000; // 10 seconds total
+  const tick = 40;            // smooth + Safari friendly
   const audioRef = currentAudio;
 
   const startVol = Math.max(0.001, audioRef.volume ?? 1.0);
   const startTime = performance.now();
 
-  // A curve that stays louder early, then drops more later.
-  // This is a "biased smoothstep": slow early, faster mid-late, smooth finish.
-  function biasedSmoothstep(t){
-    // Standard smoothstep: s = t*t*(3-2t)
-    let s = t * t * (3 - 2 * t);
+  // Custom PA-style curve:
+  // 0–40% time: hold volume
+  // 40–85%: slow exponential glide
+  // 85–100%: feather to silence
+  function paFadeCurve(t){
+    if (t < 0.4) {
+      return 0; // hold volume
+    }
 
-    // Bias it so the first part stays louder (reduce early attenuation)
-    // b < 1 keeps volume higher longer; try 0.55–0.75
-    const b = 0.65;
-    s = Math.pow(s, b);
+    if (t < 0.85) {
+      const x = (t - 0.4) / 0.45; // normalize to 0–1
+      return Math.pow(x, 2.2) * 0.85;
+    }
 
-    return s;
+    // final feather
+    const y = (t - 0.85) / 0.15;
+    return 0.85 + Math.pow(y, 0.7) * 0.15;
   }
 
   fadeInterval = setInterval(() => {
@@ -403,12 +407,12 @@
     const elapsed = performance.now() - startTime;
     const t = Math.min(1, elapsed / fadeDuration);
 
-    const s = biasedSmoothstep(t);           // 0 → 1
-    const newVol = startVol * (1 - s);       // startVol → 0
+    const curve = paFadeCurve(t); // 0 → 1
+    const newVol = startVol * (1 - curve);
 
     audioRef.volume = Math.max(0, newVol);
 
-    if(t >= 1 || audioRef.volume <= 0.002){
+    if(t >= 1 || audioRef.volume <= 0.001){
       audioRef.volume = 0;
       try { audioRef.pause(); } catch(e){}
       try { audioRef.currentTime = 0; } catch(e){}
