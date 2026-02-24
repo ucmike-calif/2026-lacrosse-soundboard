@@ -363,48 +363,54 @@
     }
 
     // Fade-out stop (requested change)
-    function stopCurrentWithFade(){
-      if(!currentAudio) return;
+   function stopCurrentWithFade(){
+  if(!currentAudio) return;
 
-      // Cancel any existing fade
-      if(fadeInterval){
-        clearInterval(fadeInterval);
-        fadeInterval = null;
-      }
+  // Cancel any existing fade
+  if(fadeInterval){
+    clearInterval(fadeInterval);
+    fadeInterval = null;
+  }
 
-      const fadeDuration = 2100; // ms (tweak: 500–2100)
-      const steps = 18;
-      const stepTime = fadeDuration / steps;
+  const fadeDuration = 2500; // ms (try 2000–3500)
+  const tick = 30;           // ms per step (smaller = smoother)
+  const audioRef = currentAudio;
 
-      const audioRef = currentAudio;
-      const startVol = Math.max(0.01, audioRef.volume || 1.0);
-      const volStep = startVol / steps;
+  const startVol = Math.max(0.001, audioRef.volume ?? 1.0);
+  const startTime = Date.now();
 
-      fadeInterval = setInterval(() => {
-        // If something else started playing, abort this fade
-        if(currentAudio !== audioRef){
-          clearInterval(fadeInterval);
-          fadeInterval = null;
-          return;
-        }
-
-        if(audioRef.volume > volStep){
-          audioRef.volume = Math.max(0, audioRef.volume - volStep);
-        } else {
-          audioRef.volume = 0;
-          try { audioRef.pause(); } catch(e){}
-          try { audioRef.currentTime = 0; } catch(e){}
-          audioRef.volume = 1.0;
-
-          clearInterval(fadeInterval);
-          fadeInterval = null;
-
-          currentAudio = null;
-          clearPlayingHighlight();
-          setStatus("");
-        }
-      }, stepTime);
+  fadeInterval = setInterval(() => {
+    // If something else started playing, abort this fade
+    if(currentAudio !== audioRef){
+      clearInterval(fadeInterval);
+      fadeInterval = null;
+      return;
     }
+
+    const elapsed = Date.now() - startTime;
+    const t = Math.min(1, elapsed / fadeDuration);
+
+    // Ease-out curve (smooth, "stadium" feel)
+    // t=0 => 0, t=1 => 1
+    const eased = 1 - Math.pow(1 - t, 3);
+
+    audioRef.volume = Math.max(0, startVol * (1 - eased));
+
+    if(t >= 1 || audioRef.volume <= 0.002){
+      audioRef.volume = 0;
+      try { audioRef.pause(); } catch(e){}
+      try { audioRef.currentTime = 0; } catch(e){}
+      audioRef.volume = 1.0;
+
+      clearInterval(fadeInterval);
+      fadeInterval = null;
+
+      currentAudio = null;
+      clearPlayingHighlight();
+      setStatus("");
+    }
+  }, tick);
+}
 
     function playAudio(src, label, buttonEl){
       // If we’re fading something out, kill the fade and stop immediately
