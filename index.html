@@ -247,9 +247,11 @@
 
     // Fade tuning (what you asked for)
     // Total fade time ~10 seconds, mostly audible first ~2 seconds.
-    const FADE_TOTAL_SEC = 10.0;
-    const FADE_HOLD_SEC  = 2.0;
-    const FADE_TIME_CONSTANT = 2.8; // bigger = longer audible tail
+    // Fade tuning (shorter, natural-sounding fade)
+    // ~5 seconds total, mostly audible first ~1.5 seconds.
+    const FADE_TOTAL_SEC = 5.0;
+    const FADE_HOLD_SEC  = 1.5;
+    const FADE_TIME_CONSTANT = 1.6; // bigger = longer audible tail
 
     const players = [
       { num: 1,  name: "Roshan Royai",                songFile: "01_Roshan_Royai.mp3",                 goalFile: "01_Roshan_Royai_Goal.mp3" },
