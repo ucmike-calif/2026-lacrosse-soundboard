@@ -74,6 +74,18 @@
       box-shadow: 0 2px 8px var(--btnShadow);
     }
 
+    .ctlbtn:disabled{
+      opacity: 0.85;
+      cursor: default;
+    }
+
+    /* Visual feedback when Stop has been clicked */
+    .ctlbtn.stopping{
+      background: rgba(179,0,0,0.08);
+      border-color: rgba(179,0,0,0.25);
+      outline: 2px solid rgba(179,0,0,0.25);
+    }
+
     .tabbtn.active{
       outline: 2px solid rgba(0,0,0,0.06);
     }
@@ -248,11 +260,11 @@
 
     // Fade tuning (what you asked for)
     // Total fade time ~10 seconds, mostly audible first ~2 seconds.
-    // Fade tuning (shorter, natural-sounding fade)
-    // ~5 seconds total, mostly audible first ~1.5 seconds.
-    const FADE_TOTAL_SEC = 5.0;
-    const FADE_HOLD_SEC  = 1.5;
-    const FADE_TIME_CONSTANT = 1.6; // bigger = longer audible tail
+    // Fade tuning
+    // Shorter overall, and smoother all the way to silence (no end "cliff").
+    const FADE_TOTAL_SEC = 4.0;   // total fade length
+    const FADE_HOLD_SEC  = 1.0;   // stays mostly audible at first
+    const FADE_TIME_CONSTANT = 1.6; // kept for compatibility; not used by the current fade curve // bigger = longer audible tail
 
     const players = [
       { num: 1,  name: "Roshan Royai",                songFile: "01_Roshan_Royai.mp3",                 goalFile: "01_Roshan_Royai_Goal.mp3" },
@@ -396,9 +408,15 @@
       // Hold steady
       g.setValueAtTime(startVal, now + hold);
 
-      // Smooth linear fade to near-silence (avoids "falls off a cliff" on some Safari setups)
+      // Smooth, two-stage fade (lingers, then gently disappears)
       const endTime = now + total;
-      g.linearRampToValueAtTime(floor, endTime);
+      const midTime = now + hold + (total - hold) * 0.75;
+      const midVal  = Math.max(floor, startVal * 0.25);
+
+      // Hold steady, then ease down, then finish with a gentle exponential to silence.
+      g.linearRampToValueAtTime(startVal, now + hold);
+      g.linearRampToValueAtTime(midVal, midTime);
+      g.exponentialRampToValueAtTime(floor, endTime);
 
       fadeTimeout = setTimeout(() => {
         hardStop();
@@ -585,8 +603,24 @@
     goalTab.addEventListener("click",  () => setMode(Mode.GOAL));
 
     stopBtn.addEventListener("click", () => {
+      // Make it obvious the click registered
+      const originalText = stopBtn.textContent;
+      stopBtn.classList.add("stopping");
+      stopBtn.textContent = "Stopping…";
+      stopBtn.disabled = true;
+      setStatus("Stopping…");
+
       stopWithFade();
       hideConfirmBar();
+
+      const ms = Math.ceil(Math.max(0.5, FADE_TOTAL_SEC) * 1000) + 250;
+      setTimeout(() => {
+        stopBtn.classList.remove("stopping");
+        stopBtn.textContent = originalText;
+        stopBtn.disabled = false;
+        // If nothing is playing anymore, clear the status line
+        if (!currentSourceNode) setStatus("");
+      }, ms);
     });
 
     replayBtn.addEventListener("click", () => {
