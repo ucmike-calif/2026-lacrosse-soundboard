@@ -303,9 +303,13 @@
     let lastPlayed = null;   // { src, label }
     let pendingGoal = null;  // { src, label, buttonEl }
 
-    // HTMLAudioElement playback (more reliable than WebAudio buffer playback on Safari)
+    // Hybrid playback: HTMLAudioElement routed through Web Audio GainNode for Safari-safe output + smooth fades
     let currentAudioEl = null;
+    let audioCtx = null;
+    let currentMediaNode = null;
+    let currentGainNode = null;
     let fadeTimer = null;
+    let audioUnlocked = false;
 
     const grid = document.getElementById("grid");
     const status = document.getElementById("status");
@@ -341,13 +345,49 @@
         clearInterval(fadeTimer);
         fadeTimer = null;
       }
+
+      // Stop audio element
       if (currentAudioEl){
         try { currentAudioEl.pause(); } catch(e){}
         try { currentAudioEl.currentTime = 0; } catch(e){}
-        currentAudioEl = null;
       }
+
+      // Disconnect Web Audio nodes
+      if (currentMediaNode){
+        try { currentMediaNode.disconnect(); } catch(e){}
+        currentMediaNode = null;
+      }
+      if (currentGainNode){
+        try { currentGainNode.disconnect(); } catch(e){}
+        currentGainNode = null;
+      }
+
+      currentAudioEl = null;
       clearPlayingHighlight();
       setStatus("");
+    }
+
+    function ensureAudioContext(){
+      if (!audioCtx){
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      return audioCtx;
+    }
+
+    async function unlockAudio(){
+      const ctx = ensureAudioContext();
+      if (ctx.state === "suspended"){
+        try { await ctx.resume(); } catch(e){}
+      }
+      if (audioUnlocked) return;
+      try {
+        const buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+        const src = ctx.createBufferSource();
+        src.buffer = buffer;
+        src.connect(ctx.destination);
+        src.start(0);
+      } catch(e){}
+      audioUnlocked = true;
     }
 
     function stopWithFade(){
@@ -362,37 +402,36 @@
       }
 
       const audio = currentAudioEl;
-      const startVol = Math.max(0.0001, audio.volume ?? 1);
       const totalMs = Math.max(300, Math.round(FADE_TOTAL_SEC * 1000));
       const holdMs  = Math.max(0, Math.min(totalMs - 50, Math.round(FADE_HOLD_SEC * 1000)));
       const startTs = performance.now();
 
-      // Clear any abrupt perception: smooth fader curve using cosine + eased tail
+      // Prefer GainNode fade when available
+      const hasGain = !!(currentGainNode && audioCtx);
+      const startGain = hasGain ? (currentGainNode.gain.value || 1) : (audio.volume ?? 1);
+
       fadeTimer = setInterval(() => {
         const t = performance.now() - startTs;
 
         if (t <= holdMs){
-          audio.volume = startVol;
+          if (hasGain) currentGainNode.gain.value = startGain;
+          else audio.volume = startGain;
           return;
         }
 
         const p = Math.min(1, (t - holdMs) / Math.max(1, (totalMs - holdMs)));
-
-        // Smoothstep then cosine for a very gentle end (no cliff)
-        const smooth = p * p * (3 - 2 * p); // smoothstep
+        // Super-smooth curve: smoothstep -> cosine
+        const smooth = p * p * (3 - 2 * p);
         const cosine = 0.5 - 0.5 * Math.cos(Math.PI * smooth);
-        const v = startVol * (1 - cosine);
+        const v = Math.max(0.0001, startGain * (1 - cosine));
 
-        audio.volume = Math.max(0.0001, v);
+        if (hasGain) currentGainNode.gain.value = v;
+        else audio.volume = v;
 
         if (p >= 1){
           clearInterval(fadeTimer);
           fadeTimer = null;
-          try { audio.pause(); } catch(e){}
-          try { audio.currentTime = 0; } catch(e){}
-          if (currentAudioEl === audio) currentAudioEl = null;
-          clearPlayingHighlight();
-          setStatus("");
+          stopImmediate();
         }
       }, 33);
     }
@@ -400,10 +439,40 @@
     async function playAudio(src, label, buttonEl){
       stopImmediate();
 
+      // Ensure Safari output is unlocked on a user gesture
+      await unlockAudio();
+      const ctx = ensureAudioContext();
+      if (ctx.state === "suspended"){
+        try { await ctx.resume(); } catch(e){}
+      }
+
       const audio = new Audio(src);
       audio.preload = "auto";
       audio.volume = 1.0;
+      audio.muted = false;
+      audio.playsInline = true;
       currentAudioEl = audio;
+
+      // Helpful error reporting (Safari will throw decode/MIME issues here)
+      audio.addEventListener("error", () => {
+        const code = audio?.error?.code;
+        setStatus(`Audio error for ${src} (code ${code || "?"})`);
+        clearPlayingHighlight();
+      });
+
+      // Route through Web Audio GainNode so fades are consistent
+      try {
+        currentGainNode = ctx.createGain();
+        currentGainNode.gain.setValueAtTime(1.0, ctx.currentTime);
+        currentGainNode.connect(ctx.destination);
+
+        currentMediaNode = ctx.createMediaElementSource(audio);
+        currentMediaNode.connect(currentGainNode);
+      } catch(e){
+        // If MediaElementSource fails (can happen if reused incorrectly), fall back to plain audio element
+        currentMediaNode = null;
+        currentGainNode = null;
+      }
 
       if (buttonEl){
         currentButtonEl = buttonEl;
@@ -414,9 +483,7 @@
 
       audio.addEventListener("ended", () => {
         if (currentAudioEl === audio){
-          currentAudioEl = null;
-          clearPlayingHighlight();
-          setStatus("");
+          stopImmediate();
         }
       });
 
@@ -426,9 +493,7 @@
         setStatus(`Playing: ${label}`);
       } catch (err){
         console.error("PLAY ERROR:", err);
-        clearPlayingHighlight();
         setStatus(`Playback blocked: tap again (${err?.name || "error"})`);
-        // leave audio allocated; a second tap usually succeeds on Safari
       }
     }
 
