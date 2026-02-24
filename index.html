@@ -88,9 +88,8 @@
       min-height: 22px;
     }
 
-    /* Grid */
     .gridwrap{
-      padding: 12px 16px 110px; /* extra bottom padding to make space for confirm bar */
+      padding: 12px 16px 110px;
     }
     .grid{
       display: grid;
@@ -120,7 +119,6 @@
       transition: transform 0.05s ease, background 0.2s ease;
     }
 
-    /* Mode tint on buttons */
     .card.songModeTint{ background: var(--greenTint); }
     .card.goalModeTint{ background: var(--redTint); }
 
@@ -128,12 +126,10 @@
       transform: scale(0.985);
     }
 
-    /* tap flash */
     .card.flash{
       outline: 3px solid rgba(0,0,0,0.14);
     }
 
-    /* playing highlight */
     .card.playing{
       outline: 4px solid rgba(0,0,0,0.22);
       box-shadow: 0 10px 20px rgba(0,0,0,0.14);
@@ -157,7 +153,6 @@
       min-height: 18px;
     }
 
-    /* Confirm bar (Goal mode only) */
     .confirmbar{
       position: fixed;
       left: 0;
@@ -167,7 +162,7 @@
       background: rgba(255,255,255,0.95);
       border-top: 1px solid var(--border);
       box-shadow: 0 -10px 24px rgba(0,0,0,0.08);
-      display: none; /* shown only when needed */
+      display: none;
       z-index: 999;
       backdrop-filter: blur(8px);
     }
@@ -236,7 +231,6 @@
     <div id="grid" class="grid"></div>
   </div>
 
-  <!-- Confirm bar (Goal mode only) -->
   <div id="confirmBar" class="confirmbar">
     <div class="confirmbar-inner">
       <div id="confirmText" class="confirmtext">Confirm GOAL call:</div>
@@ -247,9 +241,15 @@
 
   <script>
     /*****************************************************************
-     * EDIT HERE: Roster + file naming
+     * EDIT HERE: Folder structure + roster + file naming
      *****************************************************************/
-    const AUDIO_BASE = "audio";
+    const AUDIO_BASE = "audio"; // repo path: /audio/...
+
+    // Fade tuning (what you asked for)
+    // Total fade time ~10 seconds, mostly audible first ~2 seconds.
+    const FADE_TOTAL_SEC = 10.0;
+    const FADE_HOLD_SEC  = 2.0;
+    const FADE_TIME_CONSTANT = 2.8; // bigger = longer audible tail
 
     const players = [
       { num: 1,  name: "Roshan Royai",                songFile: "01_Roshan_Royai.mp3",                 goalFile: "01_Roshan_Royai_Goal.mp3" },
@@ -275,6 +275,9 @@
     ];
 
     const extras = [
+      // NOTE: these resolve to:
+      // audio/songs/extras/Anthem.mp3
+      // audio/goals/extras/Anthem_Goal.mp3
       { key: "Anthem", labelTop: "Anthem", labelBottom: "National Anthem", songFile: "extras/Anthem.mp3", goalFile: "extras/Anthem_Goal.mp3" },
       { key: "TBD 1", labelTop: "TBD 1", labelBottom: "TBD 1", songFile: "extras/TBD_1.mp3", goalFile: "extras/TBD_1_Goal.mp3" },
       { key: "TBD 2", labelTop: "TBD 2", labelBottom: "TBD 2", songFile: "extras/TBD_2.mp3", goalFile: "extras/TBD_2_Goal.mp3" },
@@ -287,19 +290,16 @@
     const Mode = Object.freeze({ SONGS: "songs", GOAL: "goal" });
     let currentMode = Mode.SONGS;
 
-    // Existing state vars (kept for compatibility with earlier code)
-    let currentAudio = null;        // mirrors currentAudioEl when playing
     let currentButtonEl = null;
+    let lastPlayed = null;  // { src, label }
+    let pendingGoal = null; // { src, label, buttonEl }
 
-    let lastPlayed = null;          // { src, label }
-    let pendingGoal = null;         // { src, label, buttonEl }
-
-    // Web Audio API state (buffer-based playback for reliable fades in Safari)
+    // Web Audio API playback state (Safari-friendly + reliable fades)
     let audioCtx = null;
     let currentGainNode = null;
     let currentSourceNode = null;
     let fadeTimeout = null;
-    let playRequestId = 0; // prevents stale async fetch/decode from starting later
+    let playRequestId = 0; // cancels stale async loads
 
     const grid = document.getElementById("grid");
     const status = document.getElementById("status");
@@ -318,9 +318,7 @@
     /*****************************************************************
      * Utilities
      *****************************************************************/
-    function setStatus(text){
-      status.textContent = text || "";
-    }
+    function setStatus(text){ status.textContent = text || ""; }
 
     function flashButton(el){
       if(!el) return;
@@ -335,200 +333,134 @@
       }
     }
 
-    // Hard stop: immediately silence + stop source
-    function stopCurrentImmediate(){
+    function ensureAudioContext(){
+      if (!audioCtx){
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      return audioCtx;
+    }
+
+    function hardStop(){
       if (fadeTimeout){
         clearTimeout(fadeTimeout);
         fadeTimeout = null;
       }
 
-      // Stop source immediately
+      // invalidate any pending fetch/decode
+      playRequestId++;
+
       if (currentSourceNode){
         try { currentSourceNode.stop(0); } catch(e){}
+        try { currentSourceNode.disconnect(); } catch(e){}
         currentSourceNode = null;
       }
 
-      // Disconnect gain
       if (currentGainNode){
         try { currentGainNode.disconnect(); } catch(e){}
         currentGainNode = null;
       }
 
-      currentAudio = null;
       clearPlayingHighlight();
       setStatus("");
-
-      // Invalidate any in-flight fetch/decode
-      playRequestId++;
     }
 
-    // Stop with a true fader-style fade (Safari-reliable)
-    // Default: 10s total, stays mostly audible for first ~2–4s
-    function stopCurrentWithFade(){
-      if (!audioCtx || !currentGainNode || !currentSourceNode) return;
+    function stopWithFade(){
+      if (!audioCtx || !currentGainNode || !currentSourceNode){
+        hardStop();
+        return;
+      }
 
       if (fadeTimeout){
         clearTimeout(fadeTimeout);
         fadeTimeout = null;
       }
 
-      // Make sure context is running
       if (audioCtx.state === "suspended"){
         audioCtx.resume().catch(() => {});
       }
 
       const now = audioCtx.currentTime;
-      const total = 20.0;  // seconds total
-      const hold  = 10.0;   // seconds mostly audible (set 2–5)
+      const total = Math.max(0.5, FADE_TOTAL_SEC);
+      const hold  = Math.min(total - 0.1, Math.max(0, FADE_HOLD_SEC));
       const floor = 0.0001;
 
       const g = currentGainNode.gain;
       g.cancelScheduledValues(now);
-      g.setValueAtTime(Math.max(g.value || 1.0, 0.0001), now);
+
+      const startVal = Math.max(g.value || 1.0, floor);
+      g.setValueAtTime(startVal, now);
 
       // Hold steady
-      g.setValueAtTime(g.value || 1.0, now + hold);
+      g.setValueAtTime(startVal, now + hold);
 
-      // Tail with a natural-sounding exponential falloff
-      // timeConstant controls how slowly it decays after hold.
-      const timeConstant = 10.0; // larger = longer audible tail (try 3–6)
-      g.setTargetAtTime(floor, now + hold, timeConstant);
+      // Natural tail
+      g.setTargetAtTime(floor, now + hold, Math.max(0.05, FADE_TIME_CONSTANT));
 
-      // Stop the source after total seconds (gives a long, audible tail)
       fadeTimeout = setTimeout(() => {
-        if (currentSourceNode){
-          try { currentSourceNode.stop(0); } catch(e){}
-          currentSourceNode = null;
-        }
-        if (currentGainNode){
-          try { currentGainNode.disconnect(); } catch(e){}
-          currentGainNode = null;
-        }
-        currentAudio = null;
-        clearPlayingHighlight();
-        setStatus("");
-        fadeTimeout = null;
-      }, Math.ceil(total * 1000) + 80);
+        hardStop();
+      }, Math.ceil(total * 1000) + 120);
     }
 
     async function playAudio(src, label, buttonEl){
-      // Hard-stop anything currently playing
-      stopCurrentImmediate();
+      // stop whatever is playing (immediately) before starting a new one
+      hardStop();
 
-      // Create/reuse AudioContext (must be on user gesture)
-      if (!audioCtx){
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      }
-      if (audioCtx.state === "suspended"){
-        try { await audioCtx.resume(); } catch(e){}
+      const ctx = ensureAudioContext();
+      // This resume (inside click handler path) prevents "tap again" Safari blocks
+      if (ctx.state === "suspended"){
+        try { await ctx.resume(); } catch(e){}
       }
 
-      // Track this request so older async work can't start later
       const myId = ++playRequestId;
 
-      // UI highlight
       if (buttonEl){
         currentButtonEl = buttonEl;
         buttonEl.classList.add("playing");
       }
+
       setStatus(`Loading: ${label}`);
 
       try {
         const resp = await fetch(src, { cache: "no-cache" });
         if (!resp.ok) throw new Error(`HTTP ${resp.status} loading ${src}`);
         const arrayBuf = await resp.arrayBuffer();
-
-        // If another sound started while we were loading, abort
         if (myId !== playRequestId) return;
 
-        const audioBuf = await audioCtx.decodeAudioData(arrayBuf);
+        const audioBuf = await ctx.decodeAudioData(arrayBuf);
         if (myId !== playRequestId) return;
 
-        // Create nodes
-        const gainNode = audioCtx.createGain();
-        gainNode.gain.setValueAtTime(1.0, audioCtx.currentTime);
-        gainNode.connect(audioCtx.destination);
+        const gainNode = ctx.createGain();
+        gainNode.gain.setValueAtTime(1.0, ctx.currentTime);
+        gainNode.connect(ctx.destination);
 
-        const sourceNode = audioCtx.createBufferSource();
+        const sourceNode = ctx.createBufferSource();
         sourceNode.buffer = audioBuf;
         sourceNode.connect(gainNode);
 
-        // Set current nodes
         currentGainNode = gainNode;
         currentSourceNode = sourceNode;
-        currentAudio = { src, label }; // lightweight marker for "playing"
 
         lastPlayed = { src, label };
         setStatus(`Playing: ${label}`);
 
         sourceNode.onended = () => {
-          // Only clear if nothing else has started
+          // only clear if nothing else started after this
           if (myId === playRequestId){
             try { sourceNode.disconnect(); } catch(e){}
             try { gainNode.disconnect(); } catch(e){}
             currentSourceNode = null;
             currentGainNode = null;
-            currentAudio = null;
             clearPlayingHighlight();
             setStatus("");
           }
         };
 
         sourceNode.start(0);
-
       } catch (err){
         console.error("PLAY ERROR:", err);
         clearPlayingHighlight();
         setStatus("Could not play audio. Check file path/format.");
-      }
-    }
-      if (audioCtx.state === "suspended"){
-        try { await audioCtx.resume(); } catch(e){}
-      }
-
-      const audio = new Audio(src);
-      audio.volume = 1.0;
-      currentAudioEl = audio;
-      currentAudio = audio;
-
-      // Route through GainNode
-      currentGainNode = audioCtx.createGain();
-      currentGainNode.gain.setValueAtTime(1.0, audioCtx.currentTime);
-
-      currentMediaNode = audioCtx.createMediaElementSource(audio);
-      currentMediaNode.connect(currentGainNode);
-      currentGainNode.connect(audioCtx.destination);
-
-      // Highlight button while playing
-      if (buttonEl){
-        currentButtonEl = buttonEl;
-        buttonEl.classList.add("playing");
-      }
-
-      setStatus(`Playing: ${label}`);
-      lastPlayed = { src, label };
-
-      audio.addEventListener("ended", () => {
-        if (currentAudioEl === audio){
-          try { currentMediaNode && currentMediaNode.disconnect(); } catch(e){}
-          try { currentGainNode && currentGainNode.disconnect(); } catch(e){}
-          currentMediaNode = null;
-          currentGainNode = null;
-
-          currentAudioEl = null;
-          currentAudio = null;
-          clearPlayingHighlight();
-          setStatus("");
-        }
-      });
-
-      try {
-        await audio.play();
-      } catch (err) {
-        console.error("PLAY ERROR:", err);
-        setStatus(`Could not play audio (${err?.name || "error"}). Check file path/format.`);
-        clearPlayingHighlight();
-        stopCurrentImmediate();
+        hardStop();
       }
     }
 
@@ -646,7 +578,7 @@
     goalTab.addEventListener("click",  () => setMode(Mode.GOAL));
 
     stopBtn.addEventListener("click", () => {
-      stopCurrentWithFade();
+      stopWithFade();
       hideConfirmBar();
     });
 
