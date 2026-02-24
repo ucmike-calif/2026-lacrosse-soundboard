@@ -378,8 +378,8 @@
       }
 
       const now = audioCtx.currentTime;
-      const total = 20.0;  // seconds total
-      const hold  = 10.0;   // seconds mostly audible (set 2–5)
+      const total = 10.0;  // seconds total
+      const hold  = 3.0;   // seconds mostly audible (set 2–5)
       const floor = 0.0001;
 
       const g = currentGainNode.gain;
@@ -391,7 +391,7 @@
 
       // Tail with a natural-sounding exponential falloff
       // timeConstant controls how slowly it decays after hold.
-      const timeConstant = 10.0; // larger = longer audible tail (try 3–6)
+      const timeConstant = 3.5; // larger = longer audible tail (try 3–6)
       g.setTargetAtTime(floor, now + hold, timeConstant);
 
       // Stop the source after total seconds (gives a long, audible tail)
