@@ -373,38 +373,37 @@
       }
 
       const now = audioCtx.currentTime;
-      const total = 10.0;  // seconds
-      const hold  = 4.0;   // seconds mostly-audible
 
-      const gain = currentGainNode.gain;
-      gain.cancelScheduledValues(now);
+      // You asked for: long tail, but stays mostly audible at first.
+      // This curve holds for a bit, then uses setTargetAtTime (a natural analog-style exponential)
+      // which sounds smoother in Safari than exponentialRampToValueAtTime.
+      const total = 10.0;   // seconds total fade length
+      const hold  = 2.0;    // seconds to stay mostly audible (increase to 3–4 if you want)
+      const floor = 0.0001; // must be > 0 for Web Audio
 
-      const currentVal = Math.max(0.0001, gain.value || 1.0);
-      gain.setValueAtTime(currentVal, now);
+      const gainParam = currentGainNode.gain;
 
-      // Hold
-      gain.setValueAtTime(currentVal, now + hold);
+      // Cancel any prior automation and *force* an audible starting point.
+      // Safari can report a stale gain.value; setting to 1.0 avoids the "silent after 2s" issue.
+      gainParam.cancelScheduledValues(now);
+      gainParam.setValueAtTime(1.0, now);
 
-      // Tail
-      try {
-        gain.exponentialRampToValueAtTime(Math.max(0.15 * currentVal, 0.0001), now + (total - 0.8));
-        gain.exponentialRampToValueAtTime(0.0001, now + total);
-      } catch (e) {
-        gain.linearRampToValueAtTime(0.15 * currentVal, now + (total - 0.8));
-        gain.linearRampToValueAtTime(0.0001, now + total);
-      }
+      // Hold near full volume
+      gainParam.setValueAtTime(1.0, now + hold);
 
+      // Tail off smoothly. The timeConstant controls how quickly it drops:
+      // bigger = slower, more audible longer.
+      const timeConstant = 2.8; // tweak 2.2–4.0
+      gainParam.setTargetAtTime(floor, now + hold, timeConstant);
+
+      // Stop after total duration
       fadeTimeout = setTimeout(() => {
         if (!currentAudioEl) return;
 
         try { currentAudioEl.pause(); } catch(e){}
         try { currentAudioEl.currentTime = 0; } catch(e){}
 
-        try {
-          gain.cancelScheduledValues(audioCtx.currentTime);
-          gain.setValueAtTime(1.0, audioCtx.currentTime);
-        } catch(e){}
-
+        // Cleanup nodes
         try { currentMediaNode && currentMediaNode.disconnect(); } catch(e){}
         try { currentGainNode && currentGainNode.disconnect(); } catch(e){}
         currentMediaNode = null;
@@ -415,7 +414,7 @@
         clearPlayingHighlight();
         setStatus("");
         fadeTimeout = null;
-      }, Math.ceil(total * 1000) + 60);
+      }, Math.ceil(total * 1000) + 80);
     }
 
     async function playAudio(src, label, buttonEl){
