@@ -1,0 +1,433 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Lacrosse Soundboard</title>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 14px; }
+    h2 { margin: 0 0 10px; }
+
+    .topbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    .tabs { display: flex; gap: 8px; }
+
+    /* Tabs (text colored by mode) */
+    .tab {
+      font-size: 16px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      background: #f6f6f6;
+      font-weight: 800;
+    }
+    #tabSongs { color: #0a7a2a; }
+    #tabGoals { color: #c00000; }
+
+    #tabSongs.active {
+      background: #e6f4ec;
+      border-color: #0a7a2a;
+    }
+    #tabGoals.active {
+      background: #fdeaea;
+      border-color: #c00000;
+    }
+
+    .controls { display: flex; gap: 8px; }
+    .ctrl {
+      font-size: 16px; padding: 10px 14px; border-radius: 10px;
+      border: 1px solid #999; background: #fff; font-weight: 700;
+    }
+
+    /* Mode banners */
+    .banner {
+      display: none;
+      margin: 10px 0;
+      padding: 14px 12px;
+      border-radius: 12px;
+      color: #fff;
+      font-weight: 900;
+      font-size: 22px;
+      text-align: center;
+      letter-spacing: 0.5px;
+    }
+    #songBanner { background: #0a7a2a; } /* green */
+    #goalBanner { background: #c00000; } /* red   */
+
+    .now { margin-top: 10px; opacity: 0.85; min-height: 1.2em; }
+
+    .grid {
+      margin-top: 12px;
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 10px;
+    }
+
+    /* Tile + button */
+    .tile { border-radius: 14px; padding: 6px; }
+    .tile.songs { background: rgba(10, 122, 42, 0.10); } /* subtle green tint */
+    .tile.goals { background: rgba(192, 0, 0, 0.10); }  /* subtle red tint */
+
+    .btn {
+      width: 100%;
+      font-size: 20px;
+      padding: 16px 8px;
+      border-radius: 12px;
+      border: 1px solid #bbb;
+      background: #fff;
+      touch-action: manipulation;
+      user-select: none;
+      font-weight: 800;
+    }
+    .btn.playing {
+      background: #e9f2ff;
+      border-color: #4a76ff;
+      box-shadow: 0 0 0 3px rgba(74,118,255,0.35) inset;
+    }
+
+    .label {
+      font-size: 12px;
+      opacity: 0.78;
+      margin-top: 4px;
+      text-align: center;
+      line-height: 1.2;
+      padding-bottom: 2px;
+    }
+  </style>
+</head>
+
+<body>
+  <h2>Lacrosse Soundboard</h2>
+
+  <div id="songBanner" class="banner">SONG MODE</div>
+  <div id="goalBanner" class="banner">GOAL MODE</div>
+
+  <div class="topbar">
+    <div class="tabs">
+      <button class="tab active" id="tabSongs">Songs</button>
+      <button class="tab" id="tabGoals">Goal Call</button>
+    </div>
+
+    <div class="controls">
+      <button class="ctrl" id="stopBtn">Stop</button>
+      <button class="ctrl" id="replayBtn">Replay last</button>
+    </div>
+  </div>
+
+  <div class="now" id="now"></div>
+  <div class="grid" id="grid"></div>
+
+  <!-- Goal confirm bar (hidden until needed) -->
+  <div id="goalConfirmBar" style="
+    position: fixed;
+    left: 12px; right: 12px; bottom: 12px;
+    display: none;
+    padding: 12px;
+    border-radius: 14px;
+    background: #111;
+    color: #fff;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+    z-index: 9999;
+  ">
+    <div id="goalConfirmText" style="font-size: 18px; font-weight: 900; margin-bottom: 10px;">
+      Confirm goal call
+    </div>
+
+    <div style="display: flex; gap: 10px;">
+      <button id="goalConfirmYes" style="
+        flex: 2;
+        font-size: 20px;
+        font-weight: 900;
+        padding: 14px 12px;
+        border-radius: 12px;
+        border: 0;
+        background: #c00000;
+        color: #fff;
+      ">CONFIRM GOAL</button>
+
+      <button id="goalConfirmNo" style="
+        flex: 1;
+        font-size: 18px;
+        font-weight: 900;
+        padding: 14px 12px;
+        border-radius: 12px;
+        border: 1px solid #666;
+        background: #222;
+        color: #fff;
+      ">Cancel</button>
+    </div>
+  </div>
+
+  <script>
+    // =========================
+    // CONFIG: Roster (edit here)
+    // =========================
+    // Songs tab expects:  audio/songs/##_<Name>.mp3
+    // Goal tab expects:   audio/goals/##_<Name>_Goal.mp3
+    const players = [
+      { num: 1,  name: "Roshan_Royai" },
+      { num: 2,  name: "Hayden_Nicholas" },
+      { num: 3,  name: "Corinne_Negrete" },
+      { num: 4,  name: "Ava_Thompson" },
+      { num: 5,  name: "Ceili_Dwyer" },
+      { num: 6,  name: "Ava_Ahern" },
+      { num: 7,  name: "Hazel_Toombs" },
+      { num: 8,  name: "Beatriz_Mark_Constantino" },
+      { num: 9,  name: "Sophia_Sanchez" },
+      { num: 10, name: "Calyn_Foley" },
+      { num: 11, name: "Marisa_Knight" },
+      { num: 12, name: "Samina_Mcleod" },
+      { num: 13, name: "Molly_Cotton" },
+      { num: 15, name: "Sophia_Rizzo" },
+      { num: 18, name: "Danika_Reginato" },
+      { num: 20, name: "Ava_Keane" },
+      { num: 25, name: "Isabella_Watson" },
+      { num: 27, name: "Amanda_Reed" },
+      { num: 30, name: "Claire_Junge" },
+      { num: 31, name: "Ava_Reed" }
+    ];
+
+    // Extra buttons shown on BOTH tabs (4 total)
+    // Songs tab expects: audio/songs/extras/##_Label.mp3
+    // Goal tab expects:  audio/goals/extras/##_Label_Goal.mp3
+    const extras = [
+      { id: 1, label: "National_Anthem" },
+      { id: 2, label: "TBD_1" },
+      { id: 3, label: "TBD_2" },
+      { id: 4, label: "TBD_3" }
+    ];
+
+    // =========================
+    // Internals / UI references
+    // =========================
+    const grid = document.getElementById("grid");
+    const now  = document.getElementById("now");
+
+    const tabSongs = document.getElementById("tabSongs");
+    const tabGoals = document.getElementById("tabGoals");
+
+    const songBanner = document.getElementById("songBanner");
+    const goalBanner = document.getElementById("goalBanner");
+
+    const goalConfirmBar = document.getElementById("goalConfirmBar");
+    const goalConfirmText = document.getElementById("goalConfirmText");
+    const goalConfirmYes = document.getElementById("goalConfirmYes");
+    const goalConfirmNo = document.getElementById("goalConfirmNo");
+
+    // Playback state
+    let currentAudio = null;
+    let currentButton = null;
+
+    // Replay state
+    let last = null; // { src, text }
+
+    // Pending goal confirmation
+    let pendingGoal = null; // { src, text, btn }
+
+    // Tracks current mode so tiles can tint correctly if needed
+    let mode = "songs"; // "songs" | "goals"
+
+    function sanitize(s) {
+      return String(s).replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_\-]/g, "");
+    }
+
+    function setMode(newMode) {
+      mode = newMode;
+      songBanner.style.display = (mode === "songs") ? "block" : "none";
+      goalBanner.style.display = (mode === "goals") ? "block" : "none";
+    }
+
+    function clearGrid() {
+      while (grid.firstChild) grid.removeChild(grid.firstChild);
+    }
+
+    function hideGoalConfirm() {
+      goalConfirmBar.style.display = "none";
+      pendingGoal = null;
+    }
+
+    function showGoalConfirm(payload) {
+      pendingGoal = payload; // { src, text, btn }
+      goalConfirmText.textContent = payload.text;
+      goalConfirmBar.style.display = "block";
+    }
+
+    goalConfirmYes.onclick = () => {
+      if (!pendingGoal) return;
+      const { src, text, btn } = pendingGoal;
+      hideGoalConfirm();
+      play(src, text, btn);
+    };
+
+    goalConfirmNo.onclick = () => {
+      hideGoalConfirm();
+    };
+
+    function stop() {
+      hideGoalConfirm();
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+      }
+      if (currentButton) {
+        currentButton.classList.remove("playing");
+      }
+      currentAudio = null;
+      currentButton = null;
+      now.textContent = "Stopped.";
+    }
+
+    function play(src, text, btn) {
+      hideGoalConfirm();
+
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.currentTime = 0;
+      }
+      if (currentButton) {
+        currentButton.classList.remove("playing");
+      }
+
+      now.textContent = "Playing: " + text;
+
+      const a = new Audio(src);
+
+      a.play().catch(() => {
+        now.textContent =
+          "If audio didn’t play, tap the same button again (iOS quirk). " + text;
+      });
+
+      if (btn) btn.classList.add("playing");
+
+      a.onended = () => {
+        if (btn) btn.classList.remove("playing");
+        currentAudio = null;
+        currentButton = null;
+      };
+
+      currentAudio = a;
+      currentButton = btn || null;
+      last = { src, text };
+    }
+
+    function replay() {
+      hideGoalConfirm();
+      if (!last) {
+        now.textContent = "Nothing played yet.";
+        return;
+      }
+      play(last.src, last.text, currentButton);
+    }
+
+    function makeTile(mainText, subText, onClickFn) {
+      const tile = document.createElement("div");
+      tile.className = "tile " + (mode === "songs" ? "songs" : "goals");
+
+      const btn = document.createElement("button");
+      btn.className = "btn";
+      btn.textContent = mainText;
+
+      const label = document.createElement("div");
+      label.className = "label";
+      label.textContent = subText || "";
+
+      tile.appendChild(btn);
+      tile.appendChild(label);
+
+      btn.onclick = () => onClickFn(btn);
+
+      return tile;
+    }
+
+    function renderSongs() {
+      hideGoalConfirm();
+      setMode("songs");
+
+      clearGrid();
+      tabSongs.classList.add("active");
+      tabGoals.classList.remove("active");
+
+      const sorted = [...players].sort((a,b) => a.num - b.num);
+
+      // Player songs
+      sorted.forEach(p => {
+        const displayName = p.name.replaceAll("_"," ");
+        const tile = makeTile(
+          String(p.num),
+          displayName,
+          (btn) => {
+            const src = `audio/songs/${String(p.num).padStart(2,"0")}_${sanitize(p.name)}.mp3`;
+            play(src, `Song: #${p.num} ${displayName}`, btn);
+          }
+        );
+        grid.appendChild(tile);
+      });
+
+      // Extras (4 buttons)
+      extras.forEach(e => {
+        const display = e.label.replaceAll("_"," ");
+        const main = (display === "National Anthem") ? "Anthem" : display;
+        const tile = makeTile(
+          main,
+          display,
+          (btn) => {
+            const src = `audio/songs/extras/${String(e.id).padStart(2,"0")}_${sanitize(e.label)}.mp3`;
+            play(src, `Song: ${display}`, btn);
+          }
+        );
+        grid.appendChild(tile);
+      });
+    }
+
+    function renderGoals() {
+      hideGoalConfirm();
+      setMode("goals");
+
+      clearGrid();
+      tabGoals.classList.add("active");
+      tabSongs.classList.remove("active");
+
+      const sorted = [...players].sort((a,b) => a.num - b.num);
+
+      // Player goal calls (two-tap confirm)
+      sorted.forEach(p => {
+        const displayName = p.name.replaceAll("_"," ");
+        const tile = makeTile(
+          String(p.num),
+          displayName,
+          (btn) => {
+            const src = `audio/goals/${String(p.num).padStart(2,"0")}_${sanitize(p.name)}_Goal.mp3`;
+            const text = `Confirm GOAL call: #${p.num} ${displayName}`;
+            showGoalConfirm({ src, text, btn });
+          }
+        );
+        grid.appendChild(tile);
+      });
+
+      // Extras (4 buttons) in Goal Mode also require confirm
+      extras.forEach(e => {
+        const display = e.label.replaceAll("_"," ");
+        const main = (display === "National Anthem") ? "Anthem" : display;
+        const tile = makeTile(
+          main,
+          display,
+          (btn) => {
+            const src = `audio/goals/extras/${String(e.id).padStart(2,"0")}_${sanitize(e.label)}_Goal.mp3`;
+            const text = `Confirm GOAL call: ${display}`;
+            showGoalConfirm({ src, text, btn });
+          }
+        );
+        grid.appendChild(tile);
+      });
+    }
+
+    // Wire up UI
+    tabSongs.onclick = renderSongs;
+    tabGoals.onclick = renderGoals;
+    document.getElementById("stopBtn").onclick = stop;
+    document.getElementById("replayBtn").onclick = replay;
+
+    // Start on Songs
+    renderSongs();
+  </script>
+</body>
+</html>
