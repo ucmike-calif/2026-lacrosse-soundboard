@@ -89,7 +89,7 @@
     }
 
     .gridwrap{
-      padding: 12px 16px 110px;
+      padding: 12px 16px 16px;
     }
     .grid{
       display: grid;
@@ -154,14 +154,14 @@
     }
 
     .confirmbar{
-      position: fixed;
-      left: 0;
-      right: 0;
-      bottom: 0;
+      /* Move confirmation banner to top, under the buttons */
+      position: sticky;
+      top: 0;
       padding: 10px 12px;
-      background: rgba(255,255,255,0.95);
+      background: rgba(255,255,255,0.97);
       border-top: 1px solid var(--border);
-      box-shadow: 0 -10px 24px rgba(0,0,0,0.08);
+      border-bottom: 1px solid var(--border);
+      box-shadow: 0 10px 24px rgba(0,0,0,0.08);
       display: none;
       z-index: 999;
       backdrop-filter: blur(8px);
@@ -225,19 +225,7 @@
     <button id="replayBtn" class="ctlbtn" type="button">Replay last</button>
   </div>
 
-  <div id="status" class="status"></div>
-
-  <div class="gridwrap">
-    <div id="grid" class="grid"></div>
-  </div>
-
-  <div id="confirmBar" class="confirmbar">
-    <div class="confirmbar-inner">
-      <div id="confirmText" class="confirmtext">Confirm GOAL call:</div>
-      <button id="confirmCancel" class="confirmbtn cancel" type="button">Cancel</button>
-      <button id="confirmGo" class="confirmbtn go" type="button">PLAY GOAL</button>
-    </div>
-  </div>
+  <!-- Confirm bar (Goal mode only) -->
 
   <script>
     /*****************************************************************
@@ -432,7 +420,10 @@
         if (myId !== playRequestId) return;
 
         const gainNode = ctx.createGain();
-        gainNode.gain.setValueAtTime(1.0, ctx.currentTime);
+        // Ensure gain is definitely > 0 at start (prevents "silent but playing" cases)
+        const t0 = ctx.currentTime;
+        gainNode.gain.setValueAtTime(0.0001, t0);
+        gainNode.gain.linearRampToValueAtTime(1.0, t0 + 0.02);
         gainNode.connect(ctx.destination);
 
         const sourceNode = ctx.createBufferSource();
@@ -461,7 +452,7 @@
       } catch (err){
         console.error("PLAY ERROR:", err);
         clearPlayingHighlight();
-        setStatus("Could not play audio. Check file path/format.");
+        setStatus(`Could not play: ${src} (${err?.message || 'error'})`);
         hardStop();
       }
     }
