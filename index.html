@@ -258,13 +258,10 @@
      *****************************************************************/
     const AUDIO_BASE = "audio"; // repo path: /audio/...
 
-    // Fade tuning (what you asked for)
-    // Total fade time ~10 seconds, mostly audible first ~2 seconds.
     // Fade tuning
-    // Shorter overall, and smoother all the way to silence (no end "cliff").
-    const FADE_TOTAL_SEC = 4.0;   // total fade length
-    const FADE_HOLD_SEC  = 1.0;   // stays mostly audible at first
-    const FADE_TIME_CONSTANT = 1.6; // kept for compatibility; not used by the current fade curve // bigger = longer audible tail
+    // Goal: no "cliff" — smooth, predictable tail.
+    const FADE_TOTAL_SEC = 4.0; // total fade length
+    const FADE_HOLD_SEC  = 1.0; // stays full volume for first part of fade
 
     const players = [
       { num: 1,  name: "Roshan Royai",                songFile: "01_Roshan_Royai.mp3",                 goalFile: "01_Roshan_Royai_Goal.mp3" },
@@ -290,9 +287,6 @@
     ];
 
     const extras = [
-      // NOTE: these resolve to:
-      // audio/songs/extras/Anthem.mp3
-      // audio/goals/extras/Anthem_Goal.mp3
       { key: "Anthem", labelTop: "Anthem", labelBottom: "National Anthem", songFile: "extras/Anthem.mp3", goalFile: "extras/Anthem_Goal.mp3" },
       { key: "TBD 1", labelTop: "TBD 1", labelBottom: "TBD 1", songFile: "extras/TBD_1.mp3", goalFile: "extras/TBD_1_Goal.mp3" },
       { key: "TBD 2", labelTop: "TBD 2", labelBottom: "TBD 2", songFile: "extras/TBD_2.mp3", goalFile: "extras/TBD_2_Goal.mp3" },
@@ -306,16 +300,12 @@
     let currentMode = Mode.SONGS;
 
     let currentButtonEl = null;
-    let lastPlayed = null;  // { src, label }
-    let pendingGoal = null; // { src, label, buttonEl }
+    let lastPlayed = null;   // { src, label }
+    let pendingGoal = null;  // { src, label, buttonEl }
 
-    // Web Audio API playback state (Safari-friendly + reliable fades)
-    let audioCtx = null;
-    let audioUnlocked = false; // iOS/Safari: ensure audio output is unlocked once by a user gesture
-    let currentGainNode = null;
-    let currentSourceNode = null;
-    let fadeTimeout = null;
-    let playRequestId = 0; // cancels stale async loads
+    // HTMLAudioElement playback (more reliable than WebAudio buffer playback on Safari)
+    let currentAudioEl = null;
+    let fadeTimer = null;
 
     const grid = document.getElementById("grid");
     const status = document.getElementById("status");
@@ -331,9 +321,6 @@
     const confirmCancel = document.getElementById("confirmCancel");
     const confirmGo = document.getElementById("confirmGo");
 
-    /*****************************************************************
-     * Utilities
-     *****************************************************************/
     function setStatus(text){ status.textContent = text || ""; }
 
     function flashButton(el){
@@ -349,116 +336,74 @@
       }
     }
 
-    function ensureAudioContext(){
-      if (!audioCtx){
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    function stopImmediate(){
+      if (fadeTimer){
+        clearInterval(fadeTimer);
+        fadeTimer = null;
       }
-      return audioCtx;
-    }
-
-    // Safari/iOS can appear to "play" but output is muted until the AudioContext is truly unlocked
-    async function unlockAudio(){
-      const ctx = ensureAudioContext();
-      if (ctx.state === "suspended"){
-        try { await ctx.resume(); } catch(e){}
+      if (currentAudioEl){
+        try { currentAudioEl.pause(); } catch(e){}
+        try { currentAudioEl.currentTime = 0; } catch(e){}
+        currentAudioEl = null;
       }
-      if (audioUnlocked) return;
-
-      try {
-        // Play a 1-sample buffer to unlock audio output.
-        const buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
-        const src = ctx.createBufferSource();
-        src.buffer = buffer;
-        src.connect(ctx.destination);
-        src.start(0);
-        // Some Safari versions need a tiny delay before considering it unlocked
-        audioUnlocked = true;
-      } catch(e){
-        // If unlock fails, we still try normal playback
-        audioUnlocked = true;
-      }
-    }
-
-    function hardStop(){
-      if (fadeTimeout){
-        clearTimeout(fadeTimeout);
-        fadeTimeout = null;
-      }
-
-      // invalidate any pending fetch/decode
-      playRequestId++;
-
-      if (currentSourceNode){
-        try { currentSourceNode.stop(0); } catch(e){}
-        try { currentSourceNode.disconnect(); } catch(e){}
-        currentSourceNode = null;
-      }
-
-      if (currentGainNode){
-        try { currentGainNode.disconnect(); } catch(e){}
-        currentGainNode = null;
-      }
-
       clearPlayingHighlight();
       setStatus("");
     }
 
     function stopWithFade(){
-      if (!audioCtx || !currentGainNode || !currentSourceNode){
-        hardStop();
+      if (!currentAudioEl){
+        stopImmediate();
         return;
       }
 
-      if (fadeTimeout){
-        clearTimeout(fadeTimeout);
-        fadeTimeout = null;
+      if (fadeTimer){
+        clearInterval(fadeTimer);
+        fadeTimer = null;
       }
 
-      if (audioCtx.state === "suspended"){
-        audioCtx.resume().catch(() => {});
-      }
+      const audio = currentAudioEl;
+      const startVol = Math.max(0.0001, audio.volume ?? 1);
+      const totalMs = Math.max(300, Math.round(FADE_TOTAL_SEC * 1000));
+      const holdMs  = Math.max(0, Math.min(totalMs - 50, Math.round(FADE_HOLD_SEC * 1000)));
+      const startTs = performance.now();
 
-      const now = audioCtx.currentTime;
-      const total = Math.max(0.5, FADE_TOTAL_SEC);
-      const hold  = Math.min(total - 0.1, Math.max(0, FADE_HOLD_SEC));
-      const floor = 0.0001;
+      // Clear any abrupt perception: smooth fader curve using cosine + eased tail
+      fadeTimer = setInterval(() => {
+        const t = performance.now() - startTs;
 
-      const g = currentGainNode.gain;
-      g.cancelScheduledValues(now);
+        if (t <= holdMs){
+          audio.volume = startVol;
+          return;
+        }
 
-      const startVal = Math.max(g.value || 1.0, floor);
-      g.setValueAtTime(startVal, now);
+        const p = Math.min(1, (t - holdMs) / Math.max(1, (totalMs - holdMs)));
 
-      // Hold steady
-      g.setValueAtTime(startVal, now + hold);
+        // Smoothstep then cosine for a very gentle end (no cliff)
+        const smooth = p * p * (3 - 2 * p); // smoothstep
+        const cosine = 0.5 - 0.5 * Math.cos(Math.PI * smooth);
+        const v = startVol * (1 - cosine);
 
-      // Smooth, two-stage fade (lingers, then gently disappears)
-      const endTime = now + total;
-      const midTime = now + hold + (total - hold) * 0.75;
-      const midVal  = Math.max(floor, startVal * 0.25);
+        audio.volume = Math.max(0.0001, v);
 
-      // Hold steady, then ease down, then finish with a gentle exponential to silence.
-      g.linearRampToValueAtTime(startVal, now + hold);
-      g.linearRampToValueAtTime(midVal, midTime);
-      g.exponentialRampToValueAtTime(floor, endTime);
-
-      fadeTimeout = setTimeout(() => {
-        hardStop();
-      }, Math.ceil(total * 1000) + 120);
+        if (p >= 1){
+          clearInterval(fadeTimer);
+          fadeTimer = null;
+          try { audio.pause(); } catch(e){}
+          try { audio.currentTime = 0; } catch(e){}
+          if (currentAudioEl === audio) currentAudioEl = null;
+          clearPlayingHighlight();
+          setStatus("");
+        }
+      }, 33);
     }
 
     async function playAudio(src, label, buttonEl){
-      // stop whatever is playing (immediately) before starting a new one
-      hardStop();
+      stopImmediate();
 
-      // Ensure the audio pipeline is unlocked for Safari/iOS
-      await unlockAudio();
-      const ctx = ensureAudioContext();
-      if (ctx.state === "suspended"){
-        try { await ctx.resume(); } catch(e){}
-      }
-
-      const myId = ++playRequestId;
+      const audio = new Audio(src);
+      audio.preload = "auto";
+      audio.volume = 1.0;
+      currentAudioEl = audio;
 
       if (buttonEl){
         currentButtonEl = buttonEl;
@@ -467,49 +412,23 @@
 
       setStatus(`Loading: ${label}`);
 
+      audio.addEventListener("ended", () => {
+        if (currentAudioEl === audio){
+          currentAudioEl = null;
+          clearPlayingHighlight();
+          setStatus("");
+        }
+      });
+
       try {
-        const resp = await fetch(src, { cache: "no-cache" });
-        if (!resp.ok) throw new Error(`HTTP ${resp.status} loading ${src}`);
-        const arrayBuf = await resp.arrayBuffer();
-        if (myId !== playRequestId) return;
-
-        const audioBuf = await ctx.decodeAudioData(arrayBuf);
-        if (myId !== playRequestId) return;
-
-        const gainNode = ctx.createGain();
-        // Set gain to full immediately (prevents "looks like playing but silent" issues)
-        gainNode.gain.cancelScheduledValues(ctx.currentTime);
-        gainNode.gain.setValueAtTime(1.0, ctx.currentTime);
-        gainNode.connect(ctx.destination);
-
-        const sourceNode = ctx.createBufferSource();
-        sourceNode.buffer = audioBuf;
-        sourceNode.connect(gainNode);
-
-        currentGainNode = gainNode;
-        currentSourceNode = sourceNode;
-
+        await audio.play();
         lastPlayed = { src, label };
         setStatus(`Playing: ${label}`);
-
-        sourceNode.onended = () => {
-          // only clear if nothing else started after this
-          if (myId === playRequestId){
-            try { sourceNode.disconnect(); } catch(e){}
-            try { gainNode.disconnect(); } catch(e){}
-            currentSourceNode = null;
-            currentGainNode = null;
-            clearPlayingHighlight();
-            setStatus("");
-          }
-        };
-
-        sourceNode.start(0);
       } catch (err){
         console.error("PLAY ERROR:", err);
         clearPlayingHighlight();
-        setStatus(`Could not play: ${src} (${err?.message || 'error'})`);
-        hardStop();
+        setStatus(`Playback blocked: tap again (${err?.name || "error"})`);
+        // leave audio allocated; a second tap usually succeeds on Safari
       }
     }
 
@@ -620,9 +539,7 @@
       }
     }
 
-    /*****************************************************************
-     * Controls
-     *****************************************************************/
+    // Controls
     songsTab.addEventListener("click", () => setMode(Mode.SONGS));
     goalTab.addEventListener("click",  () => setMode(Mode.GOAL));
 
@@ -642,8 +559,6 @@
         stopBtn.classList.remove("stopping");
         stopBtn.textContent = originalText;
         stopBtn.disabled = false;
-        // If nothing is playing anymore, clear the status line
-        if (!currentSourceNode) setStatus("");
       }, ms);
     });
 
