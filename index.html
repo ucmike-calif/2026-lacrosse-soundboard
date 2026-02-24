@@ -396,8 +396,9 @@
       // Hold steady
       g.setValueAtTime(startVal, now + hold);
 
-      // Natural tail
-      g.setTargetAtTime(floor, now + hold, Math.max(0.05, FADE_TIME_CONSTANT));
+      // Smooth linear fade to near-silence (avoids "falls off a cliff" on some Safari setups)
+      const endTime = now + total;
+      g.linearRampToValueAtTime(floor, endTime);
 
       fadeTimeout = setTimeout(() => {
         hardStop();
