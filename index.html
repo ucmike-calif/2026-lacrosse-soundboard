@@ -141,13 +141,13 @@
 
     .card.songModeTint{ background: var(--greenTint); }
     .card.missing{
-      opacity: 0.45;
+      opacity: 0.22;
       filter: grayscale(1);
     }
     .card.missing .num{
-      color: #777;
+      color: #666;
       border-style: dashed;
-      background: rgba(240,240,240,0.9);
+      background: rgba(225,225,225,0.95);
     }
     .card.missing .name{
       color: #777;
@@ -161,14 +161,6 @@
     .card.playing{
       outline: 4px solid rgba(0,0,0,0.22);
       box-shadow: 0 10px 20px rgba(0,0,0,0.14);
-    }
-
-    /* Flag tiles missing songs (easy to undo by editing the set) */
-    .card.missingSong{
-      opacity: 0.72;
-    }
-    .card.missingSong .num{
-      border-style: dashed;
     }
 
     .num{
@@ -280,8 +272,6 @@
 
     // Players missing SONG files (easy to undo: remove numbers from this set)
     const MISSING_SONG_NUMS = new Set([2, 4, 5, 7, 8, 10, 12, 13, 15, 25, 30]);
-
-        const MISSING_SONG_NUMS = new Set([2,4,5,7,8,10,12,13,15,25,30]);
 
     const players = [
       { num: 1,  name: "Roshan Royai",                songFile: "01_Roshan_Royai.mp3",                 goalFile: "01_Roshan_Royai_Goal.mp3" },
@@ -551,13 +541,13 @@
       setStatus("");
     }
 
-    function makeCard({ top, bottom, isMissingSong, onClick }){
+    function makeCard({ top, bottom, isMissing, onClick }){
       const card = document.createElement("div");
       card.className = "card";
 
       if(currentMode === Mode.SONGS) card.classList.add("songModeTint");
       if(currentMode === Mode.GOAL)  card.classList.add("goalModeTint");
-      if (isMissingSong) card.classList.add("missingSong");
+      if(isMissing) card.classList.add("missing");
 
       const num = document.createElement("div");
       num.className = "num";
@@ -586,15 +576,13 @@
         const goalSrc = `${AUDIO_BASE}/goals/${p.goalFile}`;
         const label = `#${p.num} ${p.name}`;
 
-        const missingSong = MISSING_SONG_NUMS.has(p.num);
-        const displayNum = missingSong ? `-${p.num}-` : String(p.num);
-
-                const isMissing = currentMode === Mode.SONGS && MISSING_SONG_NUMS.has(p.num);
+        const isMissing = MISSING_SONG_NUMS.has(p.num);
+        const displayNum = isMissing ? `-${p.num}-` : String(p.num);
 
         const card = makeCard({
           top: displayNum,
           bottom: p.name,
-          isMissingSong: missingSong,
+          isMissing,
           onClick: (el) => {
             if(currentMode === Mode.SONGS){
               playAudio(songSrc, label, el);
@@ -605,11 +593,6 @@
           }
         });
 
-                if(isMissing){
-          card.classList.add("missing");
-          const numEl = card.querySelector(".num");
-          if(numEl) numEl.textContent = `-${p.num}-`;
-        }
         grid.appendChild(card);
       }
 
@@ -618,10 +601,8 @@
         const goalSrc = `${AUDIO_BASE}/goals/${x.goalFile}`;
         const label = x.labelBottom ? `${x.labelBottom}` : x.labelTop;
 
-        const card = makeCard({
-          top: x.labelTop,
+        const card = makeCard({ top: x.labelTop,
           bottom: x.labelBottom || "",
-          isMissingSong: false,
           onClick: (el) => {
             if(currentMode === Mode.SONGS){
               playAudio(songSrc, label, el);
