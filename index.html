@@ -79,13 +79,20 @@
       cursor: default;
     }
 
-    /* Visual feedback when Stop has been clicked */
-    .ctlbtn.stopping{
-      background: rgba(179,0,0,0.08);
-      border-color: rgba(179,0,0,0.25);
-      outline: 2px solid rgba(179,0,0,0.25);
+    /* Stop button should look like a stop sign */
+    #stopBtn{
+      background: var(--red);
+      color: #fff;
+      border-color: rgba(0,0,0,0.10);
+      font-weight: 800;
     }
 
+    /* Visual feedback when Stop has been clicked */
+    #stopBtn.stopping{
+      background: #7f0000;
+      border-color: rgba(0,0,0,0.20);
+      outline: 2px solid rgba(0,0,0,0.20);
+    }
     .tabbtn.active{
       outline: 2px solid rgba(0,0,0,0.06);
     }
@@ -234,8 +241,7 @@
     </button>
 
     <button id="stopBtn" class="ctlbtn" type="button">Stop (Fade)</button>
-    <button id="replayBtn" class="ctlbtn" type="button">Replay last</button>
-  $1
+  </div>
   <!-- Goal confirm banner (shows only in Goal mode) -->
   <div id="confirmBar" class="confirmbar">
     <div class="confirmbar-inner">
@@ -317,9 +323,7 @@
     const songsTab = document.getElementById("songsTab");
     const goalTab  = document.getElementById("goalTab");
     const stopBtn  = document.getElementById("stopBtn");
-    const replayBtn= document.getElementById("replayBtn");
-
-    const confirmBar = document.getElementById("confirmBar");
+const confirmBar = document.getElementById("confirmBar");
     const confirmText = document.getElementById("confirmText");
     const confirmCancel = document.getElementById("confirmCancel");
     const confirmGo = document.getElementById("confirmGo");
@@ -624,15 +628,6 @@
         stopBtn.textContent = originalText;
         stopBtn.disabled = false;
       }, ms);
-    });
-
-    replayBtn.addEventListener("click", () => {
-      hideConfirmBar();
-      if(!lastPlayed){
-        setStatus("Nothing to replay yet.");
-        return;
-      }
-      playAudio(lastPlayed.src, `Replay: ${lastPlayed.label}`, null);
     });
 
     confirmCancel.addEventListener("click", () => {
