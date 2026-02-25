@@ -5,10 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lacrosse Soundboard</title>
   <style>
-    :root{$1--btnShadow: rgba(0,0,0,0.08);
+    :root{
+      --bg: #ffffff;
+      --text: #111;
+      --muted: #555;
+      --border: #d9d9d9;
 
-      --missingBorder: rgba(0,0,0,0.22);
-      --missingTint: rgba(0,0,0,0.04);
+      --green: #0b7a30;
+      --greenTint: rgba(11,122,48,0.10);
+
+      --red: #b30000;
+      --redTint: rgba(179,0,0,0.10);
+
+      --btnBg: #fff;
+      --btnBorder: #cfcfcf;
+      --btnShadow: rgba(0,0,0,0.08);
     }
 
     body{
@@ -82,7 +93,6 @@
       border-color: rgba(0,0,0,0.20);
       outline: 2px solid rgba(0,0,0,0.20);
     }
-
     .tabbtn.active{
       outline: 2px solid rgba(0,0,0,0.06);
     }
@@ -142,20 +152,6 @@
     .card.playing{
       outline: 4px solid rgba(0,0,0,0.22);
       box-shadow: 0 10px 20px rgba(0,0,0,0.14);
-    }
-
-    /* Flag players missing songs (easy to undo: remove from MISSING_SONG_NUMS set) */
-    .card.missingSong{
-      background: var(--missingTint);
-      border-style: dashed;
-      border-color: var(--missingBorder);
-    }
-    .card.missingSong .num{
-      border-style: dashed;
-      border-color: var(--missingBorder);
-    }
-    .card.missingSong .name{
-      color: #444;
     }
 
     .num{
@@ -246,7 +242,6 @@
 
     <button id="stopBtn" class="ctlbtn" type="button">Stop (Fade)</button>
   </div>
-
   <!-- Goal confirm banner (shows only in Goal mode) -->
   <div id="confirmBar" class="confirmbar">
     <div class="confirmbar-inner">
@@ -272,9 +267,6 @@
     // Goal: no "cliff" — smooth, predictable tail.
     const FADE_TOTAL_SEC = 4.0; // total fade length
     const FADE_HOLD_SEC  = 1.0; // stays full volume for first part of fade
-
-    // Players missing songs (add/remove jersey numbers here)
-    const MISSING_SONG_NUMS = new Set([2, 4, 5, 7, 8, 10, 12, 13, 15, 25, 30]);
 
     const players = [
       { num: 1,  name: "Roshan Royai",                songFile: "01_Roshan_Royai.mp3",                 goalFile: "01_Roshan_Royai_Goal.mp3" },
@@ -331,8 +323,7 @@
     const songsTab = document.getElementById("songsTab");
     const goalTab  = document.getElementById("goalTab");
     const stopBtn  = document.getElementById("stopBtn");
-
-    const confirmBar = document.getElementById("confirmBar");
+const confirmBar = document.getElementById("confirmBar");
     const confirmText = document.getElementById("confirmText");
     const confirmCancel = document.getElementById("confirmCancel");
     const confirmGo = document.getElementById("confirmGo");
@@ -544,10 +535,9 @@
       setStatus("");
     }
 
-    function makeCard({ top, bottom, onClick, extraClass }){
+    function makeCard({ top, bottom, onClick }){
       const card = document.createElement("div");
       card.className = "card";
-      if (extraClass) card.classList.add(extraClass);
 
       if(currentMode === Mode.SONGS) card.classList.add("songModeTint");
       if(currentMode === Mode.GOAL)  card.classList.add("goalModeTint");
@@ -574,12 +564,14 @@
     function renderGrid(){
       grid.innerHTML = "";
 
-      for(const p of players){$1const isMissing = MISSING_SONG_NUMS.has(p.num);
+      for(const p of players){
+        const songSrc = `${AUDIO_BASE}/songs/${p.songFile}`;
+        const goalSrc = `${AUDIO_BASE}/goals/${p.goalFile}`;
+        const label = `#${p.num} ${p.name}`;
 
         const card = makeCard({
-          top: isMissing ? `-${p.num}-` : String(p.num),
+          top: String(p.num),
           bottom: p.name,
-          extraClass: isMissing ? "missingSong" : null,
           onClick: (el) => {
             if(currentMode === Mode.SONGS){
               playAudio(songSrc, label, el);
