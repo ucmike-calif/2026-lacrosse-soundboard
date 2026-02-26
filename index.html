@@ -17,6 +17,9 @@
       --red: #b30000;
       --redTint: rgba(179,0,0,0.10);
 
+      --purple: #5b2d8e;
+      --purpleTint: rgba(91,45,142,0.10);
+
       --btnBg: #fff;
       --btnBorder: #cfcfcf;
       --btnShadow: rgba(0,0,0,0.08);
@@ -53,6 +56,9 @@
     }
     .banner.song{ background: var(--green); }
     .banner.goal{ background: var(--red); }
+    .banner.playlist{ background: var(--purple); }
+
+    .tabbtn .playlistText{ color: var(--purple); font-weight: 800; }
 
     .toolbar{
       display: flex;
@@ -140,6 +146,7 @@
     }
 
     .card.songModeTint{ background: var(--greenTint); }
+    .card.playlistModeTint{ background: var(--purpleTint); }
     .card.missing{
       opacity: 0.22;
       filter: grayscale(1);
@@ -241,6 +248,7 @@
   <div class="toolbar">
     <button id="songsTab" class="tabbtn active" type="button"><span class="songsText">Songs</span></button>
     <button id="goalTab" class="tabbtn" type="button"><span class="goalText">Goal Call</span></button>
+    <button id="playlistTab" class="tabbtn" type="button"><span class="playlistText">Playlist</span></button>
     <button id="stopBtn" class="ctlbtn" type="button">Stop (Fade)</button>
   </div>
 
@@ -306,7 +314,46 @@
     /*****************************************************************
      * App state
      *****************************************************************/
-    const Mode = Object.freeze({ SONGS: "songs", GOAL: "goal" });
+    const Mode = Object.freeze({ SONGS: "songs", GOAL: "goal", PLAYLIST: "playlist" });
+
+    const playlist = [
+      { title: "family ties",                    artist: "Baby Keem & Kendrick Lamar",          file: "family_ties.mp3" },
+      { title: "Flex Up",                         artist: "Lil Yachty, Future & Playboi Carti",  file: "flex_up.mp3" },
+      { title: "Like That",                       artist: "Future, Metro Boomin & Kendrick Lamar",file: "like_that.mp3" },
+      { title: "Parking Lot",                     artist: "Mustard & Travis Scott",              file: "parking_lot.mp3" },
+      { title: "Family Matters",                  artist: "Drake",                               file: "family_matters.mp3" },
+      { title: "It's Up",                         artist: "Drake, Young Thug & 21 Savage",       file: "its_up.mp3" },
+      { title: "BANDIT",                          artist: "Don Toliver",                         file: "bandit.mp3" },
+      { title: "squabble up",                     artist: "Kendrick Lamar",                      file: "squabble_up.mp3" },
+      { title: "Mmhmm",                           artist: "BigXthaPlug",                         file: "mmhmm.mp3" },
+      { title: "Surround Sound",                  artist: "JID feat. 21 Savage",                 file: "surround_sound.mp3" },
+      { title: "Praise The Lord (Da Shine)",      artist: "A$AP Rocky",                          file: "praise_the_lord.mp3" },
+      { title: "FIELD TRIP",                      artist: "¥$, Kanye West & Ty Dolla $ign",      file: "field_trip.mp3" },
+      { title: "Back On My BS",                   artist: "BigXthaPlug",                         file: "back_on_my_bs.mp3" },
+      { title: "How Soon Is Now?",                artist: "The Smiths",                           file: "how_soon_is_now.mp3" },
+      { title: "Rocket Fuel",                     artist: "DJ Shadow feat. De La Soul",           file: "rocket_fuel.mp3" },
+      { title: "So What'cha Want",                artist: "Beastie Boys",                         file: "so_whatcha_want.mp3" },
+      { title: "Turn Down for What",              artist: "DJ Snake & Lil Jon",                   file: "turn_down_for_what.mp3" },
+      { title: "It Takes Two",                    artist: "Rob Base & DJ EZ Rock",                file: "it_takes_two.mp3" },
+      { title: "Gonna Make You Sweat",            artist: "C+C Music Factory",                    file: "gonna_make_you_sweat.mp3" },
+      { title: "The Power",                       artist: "Snap!",                                file: "the_power.mp3" },
+      { title: "Uptown Funk",                     artist: "Mark Ronson feat. Bruno Mars",         file: "uptown_funk.mp3" },
+      { title: "out of sight",                    artist: "Run The Jewels feat. 2 Chainz",        file: "out_of_sight.mp3" },
+      { title: "ooh la la",                       artist: "Run The Jewels feat. DJ Premier",      file: "ooh_la_la.mp3" },
+      { title: "Seven Nation Army",               artist: "The White Stripes",                    file: "seven_nation_army.mp3" },
+      { title: "Banana Clipper",                  artist: "Run The Jewels & El-P",                file: "banana_clipper.mp3" },
+      { title: "JU$T",                            artist: "Run The Jewels feat. Zack de la Rocha",file: "just.mp3" },
+      { title: "Get Ready",                       artist: "2 Unlimited",                          file: "get_ready.mp3" },
+      { title: "Sirius",                          artist: "The Alan Parsons Project",             file: "sirius.mp3" },
+      { title: "Strike It Up",                    artist: "Black Box",                            file: "strike_it_up.mp3" },
+      { title: "Thunderstruck",                   artist: "AC/DC",                                file: "thunderstruck.mp3" },
+      { title: "Back In Black",                   artist: "AC/DC",                                file: "back_in_black.mp3" },
+      { title: "Madness",                         artist: "Muse",                                 file: "madness.mp3" },
+      { title: "Royals",                          artist: "Lorde",                                file: "royals.mp3" },
+      { title: "bad guy",                         artist: "Billie Eilish",                        file: "bad_guy.mp3" },
+      { title: "Right Here, Right Now",           artist: "Fatboy Slim",                          file: "right_here_right_now.mp3" },
+      { title: "Situation",                       artist: "Yaz",                                  file: "situation.mp3" },
+    ];
     let currentMode = Mode.SONGS;
 
     let currentButtonEl = null;
@@ -325,9 +372,10 @@
     const status = document.getElementById("status");
     const modeBanner = document.getElementById("modeBanner");
 
-    const songsTab = document.getElementById("songsTab");
-    const goalTab  = document.getElementById("goalTab");
-    const stopBtn  = document.getElementById("stopBtn");
+    const songsTab    = document.getElementById("songsTab");
+    const goalTab     = document.getElementById("goalTab");
+    const playlistTab = document.getElementById("playlistTab");
+    const stopBtn     = document.getElementById("stopBtn");
 
     const confirmBar = document.getElementById("confirmBar");
     const confirmText = document.getElementById("confirmText");
@@ -521,20 +569,24 @@
 
       if(mode === Mode.SONGS){
         modeBanner.textContent = "SONG MODE";
-        modeBanner.classList.remove("goal");
-        modeBanner.classList.add("song");
-
+        modeBanner.className = "banner song";
         songsTab.classList.add("active");
         goalTab.classList.remove("active");
-
+        playlistTab.classList.remove("active");
         hideConfirmBar();
-      } else {
+      } else if(mode === Mode.GOAL){
         modeBanner.textContent = "GOAL MODE";
-        modeBanner.classList.remove("song");
-        modeBanner.classList.add("goal");
-
+        modeBanner.className = "banner goal";
         goalTab.classList.add("active");
         songsTab.classList.remove("active");
+        playlistTab.classList.remove("active");
+      } else {
+        modeBanner.textContent = "PLAYLIST MODE";
+        modeBanner.className = "banner playlist";
+        playlistTab.classList.add("active");
+        songsTab.classList.remove("active");
+        goalTab.classList.remove("active");
+        hideConfirmBar();
       }
 
       renderGrid();
@@ -545,8 +597,9 @@
       const card = document.createElement("div");
       card.className = "card";
 
-      if(currentMode === Mode.SONGS) card.classList.add("songModeTint");
-      if(currentMode === Mode.GOAL)  card.classList.add("goalModeTint");
+      if(currentMode === Mode.SONGS)    card.classList.add("songModeTint");
+      if(currentMode === Mode.GOAL)     card.classList.add("goalModeTint");
+      if(currentMode === Mode.PLAYLIST) card.classList.add("playlistModeTint");
       if(isMissing) card.classList.add("missing");
 
       const num = document.createElement("div");
@@ -570,6 +623,21 @@
 
     function renderGrid(){
       grid.innerHTML = "";
+
+      if(currentMode === Mode.PLAYLIST){
+        for(const s of playlist){
+          const src = `${AUDIO_BASE}/playlist/${s.file}`;
+          const label = `${s.title} — ${s.artist}`;
+          const card = makeCard({
+            top: s.title,
+            bottom: s.artist,
+            isMissing: false,
+            onClick: (el) => { playAudio(src, label, el); }
+          });
+          grid.appendChild(card);
+        }
+        return;
+      }
 
       for(const p of players){
         const songSrc = `${AUDIO_BASE}/songs/${p.songFile}`;
@@ -618,8 +686,9 @@
     }
 
     // Controls
-    songsTab.addEventListener("click", () => setMode(Mode.SONGS));
-    goalTab.addEventListener("click",  () => setMode(Mode.GOAL));
+    songsTab.addEventListener("click",    () => setMode(Mode.SONGS));
+    goalTab.addEventListener("click",     () => setMode(Mode.GOAL));
+    playlistTab.addEventListener("click", () => setMode(Mode.PLAYLIST));
 
     stopBtn.addEventListener("click", () => {
       // Make it obvious the click registered
