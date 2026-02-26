@@ -676,13 +676,20 @@
 
       if(currentMode === Mode.PLAYLIST){
         grid.classList.add("playlist-grid");
+        // iPad landscape = ~1024px. 6 cols, 8px gaps = ~158px per card.
+        // Target 5 rows of ~110px = fits in ~650px content height.
         for(const s of playlist){
-          const src = `playlist/${encodeURIComponent(s.file)}`;
+          // Use encodeURI on individual path segments (preserves + and special chars better than encodeURIComponent for filenames)
+          const encodedFile = s.file.split('').map(c => {
+            // encode only chars that break URLs
+            return /[#%&+?=@[\]{}|\\^`<>" ]/.test(c) ? encodeURIComponent(c) : c;
+          }).join('');
+          const src = `playlist/${encodedFile}`;
           const label = s.artist ? `${s.title} — ${s.artist}` : s.title;
           const displayTitle = s.title
             .replace(/\s*\(Instrumental[^)]*\)/gi, '')
             .replace(/\s*\[Instrumental[^\]]*\]/gi, '')
-            .replace(/\s*Instrumental$/gi, '')
+            .replace(/\s*\(feat\.[^)]*\)/gi, '')
             .trim();
           const card = makeCard({
             top: displayTitle,
@@ -690,6 +697,12 @@
             isMissing: false,
             onClick: (el) => { playAudio(src, label, el); }
           });
+          // Apply sizing inline so it always wins regardless of CSS cache
+          card.style.cssText += '; height:110px; padding:6px; border-radius:8px; display:flex; flex-direction:column; justify-content:center; overflow:hidden;';
+          const numEl = card.querySelector('.num');
+          const nameEl = card.querySelector('.name');
+          if(numEl) numEl.style.cssText += '; font-size:13px; font-weight:700; padding:0 2px; border:none; background:transparent; line-height:1.3;';
+          if(nameEl) nameEl.style.cssText += '; font-size:10px; font-weight:400; margin-top:3px; min-height:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#555;';
           grid.appendChild(card);
         }
         return;
