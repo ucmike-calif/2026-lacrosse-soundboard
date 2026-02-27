@@ -221,16 +221,17 @@
     .card.songModeTint{ background: var(--greenTint); }
     .card.playlistModeTint{ background: var(--purpleTint); }
     .card.missing{
-      opacity: 0.22;
+      opacity: 0.5; /* Increased opacity for better readability */
       filter: grayscale(1);
     }
     .card.missing .num{
-      color: #666;
+      color: #444; /* Darkened text color */
       border-style: dashed;
-      background: rgba(225,225,225,0.95);
+      background: rgba(235,235,235,0.95);
     }
     .card.missing .name{
-      color: #777;
+      color: #444; /* Darkened text color */
+      font-weight: 500;
     }
     .card.goalModeTint{ background: var(--redTint); }
 
