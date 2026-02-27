@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  
+  <!-- Apple Web App / PWA Meta Tags for full-screen iPad experience -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Lax Board" />
+  
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
   <meta http-equiv="Pragma" content="no-cache" />
   <title>Lacrosse Soundboard</title>
@@ -32,11 +38,17 @@
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
+      /* Prevent text selection and bouncing on iPad */
+      -webkit-user-select: none;
+      user-select: none;
+      overscroll-behavior-y: none;
     }
 
     header{
       padding: 14px 16px 10px;
       border-bottom: 1px solid var(--border);
+      /* Add safe-area padding for modern iPads/iPhones */
+      padding-top: max(14px, env(safe-area-inset-top));
     }
 
     h1{
@@ -101,6 +113,11 @@
       border-color: rgba(0,0,0,0.20);
       outline: 2px solid rgba(0,0,0,0.20);
     }
+    
+    #cacheBtn {
+      font-weight: 600;
+      color: #333;
+    }
 
     .tabbtn.active{
       outline: 2px solid rgba(0,0,0,0.06);
@@ -118,6 +135,8 @@
 
     .gridwrap{
       padding: 12px 16px 16px;
+      /* Add safe padding for bottom of iPad screens */
+      padding-bottom: max(16px, env(safe-area-inset-bottom));
     }
     .grid{
       display: grid;
@@ -153,6 +172,8 @@
       cursor: pointer;
       position: relative;
       transition: transform 0.05s ease, background 0.2s ease;
+      /* Improve touch responsiveness on iOS */
+      touch-action: manipulation;
     }
 
     /* Playlist-specific grid: 6 columns, tight gaps */
@@ -302,6 +323,7 @@
     <button id="goalTab" class="tabbtn" type="button"><span class="goalText">Goal Call</span></button>
     <button id="playlistTab" class="tabbtn" type="button"><span class="playlistText">Playlist</span></button>
     <button id="stopBtn" class="ctlbtn" type="button">Stop (Fade)</button>
+    <button id="cacheBtn" class="ctlbtn" type="button" title="Download all audio to device for offline use">Offline Sync</button>
   </div>
 
   <!-- Goal confirm banner (shows only in Goal mode) -->
@@ -320,6 +342,16 @@
   </div>
 
   <script>
+    // Try to register an external service worker for caching the HTML page itself.
+    // (If you want the page itself to open without WiFi, place an empty or standard PWA sw.js next to this file).
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('./sw.js').catch(e => {
+          console.log("No external Service Worker found. HTML requires initial network to load, but audio uses local Cache API.");
+        });
+      });
+    }
+
     /*****************************************************************
      * EDIT HERE: Folder structure + roster + file naming
      *****************************************************************/
@@ -410,6 +442,9 @@
     let lastPlayed = null;   // { src, label }
     let pendingGoal = null;  // { src, label, buttonEl }
 
+    // Store Blob URLs generated from the offline cache so we don't cause memory leaks
+    const blobUrlCache = new Map();
+
     // Hybrid playback: HTMLAudioElement routed through Web Audio GainNode for Safari-safe output + smooth fades
     let currentAudioEl = null;
     let audioCtx = null;
@@ -426,6 +461,7 @@
     const goalTab     = document.getElementById("goalTab");
     const playlistTab = document.getElementById("playlistTab");
     const stopBtn     = document.getElementById("stopBtn");
+    const cacheBtn    = document.getElementById("cacheBtn");
 
     const confirmBar = document.getElementById("confirmBar");
     const confirmText = document.getElementById("confirmText");
@@ -553,7 +589,32 @@
         try { await ctx.resume(); } catch(e){}
       }
 
-      const audio = new Audio(src);
+      // Check for offline cached version first!
+      let finalSrc = src;
+      try {
+        if ('caches' in window) {
+          const cache = await caches.open('lax-audio-v1');
+          const cachedRes = await cache.match(src);
+          
+          if (cachedRes) {
+            // Already cached, convert to local Blob URL so it bypasses network completely
+            if (blobUrlCache.has(src)) {
+              finalSrc = blobUrlCache.get(src);
+            } else {
+              const blob = await cachedRes.blob();
+              finalSrc = URL.createObjectURL(blob);
+              blobUrlCache.set(src, finalSrc);
+            }
+          } else {
+            // Not in cache, fetch it passively in background so it's ready next time
+            fetch(src).then(res => {
+              if (res.ok) cache.put(src, res.clone());
+            }).catch(() => console.log("Background cache failed (offline)"));
+          }
+        }
+      } catch(e) { console.warn("Cache API Error:", e); }
+
+      const audio = new Audio(finalSrc);
       audio.preload = "auto";
       audio.volume = 1.0;
       audio.muted = false;
@@ -563,7 +624,7 @@
       // Helpful error reporting (Safari will throw decode/MIME issues here)
       audio.addEventListener("error", () => {
         const code = audio?.error?.code;
-        const fullUrl = new URL(src, window.location.href).href;
+        const fullUrl = new URL(src, window.location.href).href; // Display original source for clarity
         setStatus(`Audio error (code ${code || "?"}): ${fullUrl}`);
         clearPlayingHighlight();
       });
@@ -603,6 +664,70 @@
         console.error("PLAY ERROR:", err);
         setStatus(`Playback blocked: tap again (${err?.name || "error"})`);
       }
+    }
+
+    // New Offline Sync function to download all tracks
+    async function syncOffline() {
+      if (!('caches' in window)) {
+        setStatus("Offline caching not supported in this browser.");
+        return;
+      }
+      cacheBtn.disabled = true;
+      const originalText = cacheBtn.textContent;
+
+      try {
+        const cache = await caches.open('lax-audio-v1');
+        const allUrls = [];
+
+        players.forEach(p => {
+          if (!MISSING_SONG_NUMS.has(p.num)) allUrls.push(`${AUDIO_BASE}/songs/${p.songFile}`);
+          allUrls.push(`${AUDIO_BASE}/goals/${p.goalFile}`);
+        });
+        extras.forEach(x => {
+          allUrls.push(`${AUDIO_BASE}/songs/${x.songFile}`);
+          allUrls.push(`${AUDIO_BASE}/goals/${x.goalFile}`);
+        });
+        playlist.forEach(s => {
+          allUrls.push(`${AUDIO_BASE}/playlist/${encodeURIComponent(s.file)}`);
+        });
+
+        let loaded = 0;
+        let failed = 0;
+
+        for (let i = 0; i < allUrls.length; i++) {
+          const url = allUrls[i];
+          const pct = Math.round(((i + 1) / allUrls.length) * 100);
+          cacheBtn.textContent = `Syncing ${pct}%`;
+          
+          const displayUrl = decodeURIComponent(url.split('/').pop());
+          setStatus(`Caching (${i+1}/${allUrls.length}): ${displayUrl}`);
+
+          try {
+            const existing = await cache.match(url);
+            if (!existing) {
+              const res = await fetch(url);
+              if (res.ok) {
+                await cache.put(url, res);
+                loaded++;
+              } else {
+                failed++;
+              }
+            } else {
+              loaded++;
+            }
+          } catch(e) {
+            failed++;
+          }
+        }
+
+        setStatus(`Sync complete! ${loaded} tracks ready for offline. ${failed > 0 ? failed + ' failed.' : ''}`);
+        cacheBtn.textContent = "Offline Ready \u2713";
+        setTimeout(() => { cacheBtn.textContent = originalText; }, 5000);
+      } catch(e) {
+        setStatus(`Sync failed: ${e.message}`);
+        cacheBtn.textContent = originalText;
+      }
+      cacheBtn.disabled = false;
     }
 
     function showConfirmBar(text){
@@ -680,7 +805,6 @@
         // iPad landscape = ~1024px. 6 cols, 8px gaps = ~158px per card.
         // Target 5 rows of ~110px = fits in ~650px content height.
         for(const s of playlist){
-          // FIXED: Prepended AUDIO_BASE to correctly construct the path. 
           const src = `${AUDIO_BASE}/playlist/${encodeURIComponent(s.file)}`;
           const label = s.artist ? `${s.title} — ${s.artist}` : s.title;
           const displayTitle = s.title
@@ -693,7 +817,6 @@
             bottom: s.artist,
             isMissing: false,
             onClick: (el) => {
-              console.log("Playing:", src);
               playAudio(src, label, el);
             }
           });
@@ -759,6 +882,7 @@
     songsTab.addEventListener("click",    () => setMode(Mode.SONGS));
     goalTab.addEventListener("click",     () => setMode(Mode.GOAL));
     playlistTab.addEventListener("click", () => setMode(Mode.PLAYLIST));
+    cacheBtn.addEventListener("click",    () => syncOffline());
 
     stopBtn.addEventListener("click", () => {
       // Make it obvious the click registered
