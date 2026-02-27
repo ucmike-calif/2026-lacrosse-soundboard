@@ -563,7 +563,8 @@
       // Helpful error reporting (Safari will throw decode/MIME issues here)
       audio.addEventListener("error", () => {
         const code = audio?.error?.code;
-        setStatus(`Audio error for ${src} (code ${code || "?"})`);
+        const fullUrl = new URL(src, window.location.href).href;
+        setStatus(`Audio error (code ${code || "?"}): ${fullUrl}`);
         clearPlayingHighlight();
       });
 
@@ -679,8 +680,13 @@
         // iPad landscape = ~1024px. 6 cols, 8px gaps = ~158px per card.
         // Target 5 rows of ~110px = fits in ~650px content height.
         for(const s of playlist){
-          // Only encode spaces — GitHub Pages chokes on over-encoded filenames
-          const src = `playlist/${s.file.replace(/ /g, '%20')}`;
+          // Encode only chars that actually break URLs in path segments
+          const src = `playlist/${s.file
+            .replace(/ /g,   '%20')
+            .replace(/\[/g,  '%5B')
+            .replace(/\]/g,  '%5D')
+            .replace(/#/g,   '%23')
+            .replace(/\?/g,  '%3F')}`;
           const label = s.artist ? `${s.title} — ${s.artist}` : s.title;
           const displayTitle = s.title
             .replace(/\s*\(Instrumental[^)]*\)/gi, '')
@@ -691,12 +697,16 @@
             top: displayTitle,
             bottom: s.artist,
             isMissing: false,
-            onClick: (el) => { playAudio(src, label, el); }
+            onClick: (el) => {
+              console.log("Playing:", src);
+              playAudio(src, label, el);
+            }
           });
           // Shrink font for long titles so they don't wrap to 3 lines
           const numEl = card.querySelector('.num');
-          if(numEl && displayTitle.length > 22){
-            numEl.style.fontSize = displayTitle.length > 30 ? '12px' : '14px';
+          if(numEl){
+            if(displayTitle.length > 30)      numEl.style.fontSize = '11px';
+            else if(displayTitle.length > 18) numEl.style.fontSize = '13px';
           }
           grid.appendChild(card);
         }
