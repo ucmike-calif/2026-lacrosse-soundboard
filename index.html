@@ -680,8 +680,8 @@
         // iPad landscape = ~1024px. 6 cols, 8px gaps = ~158px per card.
         // Target 5 rows of ~110px = fits in ~650px content height.
         for(const s of playlist){
-          // Encode only chars that actually break URLs in path segments
-          const src = `playlist/${encodeURIComponent(s.file)}`;
+          // FIXED: Prepended AUDIO_BASE to correctly construct the path. 
+          const src = `${AUDIO_BASE}/playlist/${encodeURIComponent(s.file)}`;
           const label = s.artist ? `${s.title} — ${s.artist}` : s.title;
           const displayTitle = s.title
             .replace(/\s*\(Instrumental[^)]*\)/gi, '')
