@@ -681,12 +681,7 @@
         // Target 5 rows of ~110px = fits in ~650px content height.
         for(const s of playlist){
           // Encode only chars that actually break URLs in path segments
-          const src = `playlist/${s.file
-            .replace(/ /g,   '%20')
-            .replace(/\[/g,  '%5B')
-            .replace(/\]/g,  '%5D')
-            .replace(/#/g,   '%23')
-            .replace(/\?/g,  '%3F')}`;
+          const src = `playlist/${encodeURIComponent(s.file)}`;
           const label = s.artist ? `${s.title} — ${s.artist}` : s.title;
           const displayTitle = s.title
             .replace(/\s*\(Instrumental[^)]*\)/gi, '')
