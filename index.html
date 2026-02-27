@@ -679,7 +679,8 @@
         // iPad landscape = ~1024px. 6 cols, 8px gaps = ~158px per card.
         // Target 5 rows of ~110px = fits in ~650px content height.
         for(const s of playlist){
-          const src = `playlist/${encodeURIComponent(s.file)}`;
+          // Only encode spaces — GitHub Pages chokes on over-encoded filenames
+          const src = `playlist/${s.file.replace(/ /g, '%20')}`;
           const label = s.artist ? `${s.title} — ${s.artist}` : s.title;
           const displayTitle = s.title
             .replace(/\s*\(Instrumental[^)]*\)/gi, '')
@@ -692,6 +693,11 @@
             isMissing: false,
             onClick: (el) => { playAudio(src, label, el); }
           });
+          // Shrink font for long titles so they don't wrap to 3 lines
+          const numEl = card.querySelector('.num');
+          if(numEl && displayTitle.length > 22){
+            numEl.style.fontSize = displayTitle.length > 30 ? '12px' : '14px';
+          }
           grid.appendChild(card);
         }
         return;
